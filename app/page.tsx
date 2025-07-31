@@ -295,7 +295,7 @@ export default function DaemonAIApp() {
                           />
                           <div 
                             className="ml-3 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap"
-                            style={{ color: daemon.color }}
+                            style={{ color: daemon.color, marginLeft: '10px' }}
                           >
                             {daemon.name}
                           </div>
@@ -324,26 +324,26 @@ export default function DaemonAIApp() {
                   {daemons.length === 0 && (
                     <div className="text-xs text-gray-500">No daemons loaded</div>
                   )}
-                </div>
 
-                {/* Add Daemon Button */}
-                <div className="relative group flex items-center">
-                  <div
-                    className="w-6 h-6 rounded-full border-2 border-gray-300 bg-white shadow-md cursor-pointer hover:scale-110 transition-transform flex items-center justify-center"
-                    style={{ 
-                      minWidth: '24px',
-                      minHeight: '24px'
-                    }}
-                    onClick={() => setShowAddDaemon(true)}
-                    title="Add Daemon"
-                  >
-                    <Plus className="w-4 h-4 text-gray-600" />
-                  </div>
-                  <div 
-                    className="ml-3 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap"
-                    style={{ color: "#6b7280", marginLeft: '10px' }}
-                  >
-                    Add Daemon
+                  {/* Add Daemon Button */}
+                  <div className="relative group flex items-center py-1">
+                    <div
+                      className="w-6 h-6 rounded-full border-2 border-gray-300 bg-white shadow-md cursor-pointer hover:scale-110 transition-transform flex items-center justify-center"
+                      style={{ 
+                        minWidth: '24px',
+                        minHeight: '24px'
+                      }}
+                      onClick={() => setShowAddDaemon(true)}
+                      title="Add Daemon"
+                    >
+                      <Plus className="w-4 h-4 text-gray-600" />
+                    </div>
+                    <div 
+                      className="ml-3 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap"
+                      style={{ color: "#6b7280", marginLeft: '10px' }}
+                    >
+                      Add Daemon
+                    </div>
                   </div>
                 </div>
               </div>
