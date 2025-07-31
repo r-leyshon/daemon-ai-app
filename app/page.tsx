@@ -244,16 +244,16 @@ export default function DaemonAIApp() {
         )}
 
         <div ref={containerRef} className="relative bg-white rounded-lg shadow-lg p-6">
-          <div className="grid grid-cols-12 gap-6">
+          <div className="grid grid-cols-12 gap-6 h-full">
             {/* Text Content */}
-            <div className="col-span-10">
-              <div className="mb-4">
-                <Label htmlFor="text-input">Your Text</Label>
+            <div className="col-span-10 flex flex-col">
+              <div className="flex-1 flex flex-col">
                 <Textarea
                   id="text-input"
                   value={text}
                   onChange={(e) => setText(e.target.value)}
-                  className="min-h-[700px] text-base leading-relaxed"
+                  className="leading-relaxed font-normal text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
+                  style={{ fontSize: '12pt', height: '500px' }}
                   placeholder="Enter your text here..."
                 />
               </div>
