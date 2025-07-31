@@ -327,10 +327,25 @@ export default function DaemonAIApp() {
                 </div>
 
                 {/* Add Daemon Button */}
-                <Button variant="outline" size="sm" onClick={() => setShowAddDaemon(true)} className="w-full">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Daemon
-                </Button>
+                <div className="relative group flex items-center">
+                  <div
+                    className="w-6 h-6 rounded-full border-2 border-gray-300 bg-white shadow-md cursor-pointer hover:scale-110 transition-transform flex items-center justify-center"
+                    style={{ 
+                      minWidth: '24px',
+                      minHeight: '24px'
+                    }}
+                    onClick={() => setShowAddDaemon(true)}
+                    title="Add Daemon"
+                  >
+                    <Plus className="w-4 h-4 text-gray-600" />
+                  </div>
+                  <div 
+                    className="ml-3 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap"
+                    style={{ color: "#6b7280", marginLeft: '10px' }}
+                  >
+                    Add Daemon
+                  </div>
+                </div>
               </div>
             </div>
           </div>
