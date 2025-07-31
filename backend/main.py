@@ -241,6 +241,20 @@ def add_daemon(daemon: Daemon):
     daemons[daemon_id] = daemon
     return {"id": daemon_id, "status": "added", "daemon": daemon}
 
+@app.delete("/daemons/{daemon_id}")
+def delete_daemon(daemon_id: str):
+    """Delete a daemon by ID."""
+    if daemon_id not in daemons:
+        raise HTTPException(status_code=404, detail="Daemon not found")
+    
+    # Don't allow deletion of default daemons (optional safeguard)
+    default_daemon_ids = {"devil_advocate", "grammar_enthusiast", "clarity_coach"}
+    if daemon_id in default_daemon_ids:
+        raise HTTPException(status_code=400, detail="Cannot delete default daemons")
+    
+    deleted_daemon = daemons.pop(daemon_id)
+    return {"id": daemon_id, "status": "deleted", "daemon": deleted_daemon}
+
 @app.post("/suggestions")
 def get_suggestions(input_data: TextInput):
     """Generate suggestions for the given text from all daemons."""

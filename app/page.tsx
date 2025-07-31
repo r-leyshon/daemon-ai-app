@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
-import { Plus, Loader2 } from "lucide-react"
+import { Plus, Loader2, X } from "lucide-react"
 
 interface Daemon {
   id: string
@@ -39,6 +39,8 @@ export default function DaemonAIApp() {
   const [loading, setLoading] = useState(false)
   const [selectedSuggestion, setSelectedSuggestion] = useState<Suggestion | null>(null)
   const [showAddDaemon, setShowAddDaemon] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [newDaemon, setNewDaemon] = useState({
     name: "",
     prompt: "",
@@ -175,6 +177,32 @@ export default function DaemonAIApp() {
     }
   }
 
+  const deleteDaemon = async (daemonId: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/daemons/${daemonId}`, {
+        method: "DELETE",
+      })
+      if (response.ok) {
+        setDaemons(prev => prev.filter(d => d.id !== daemonId))
+        setShowDeleteConfirm(null)
+        // Clear suggestions from deleted daemon
+        setSuggestions(prev => prev.filter(s => s.daemon_id !== daemonId))
+        // Clear selected suggestion if it's from deleted daemon
+        if (selectedSuggestion?.daemon_id === daemonId) {
+          setSelectedSuggestion(null)
+        }
+      } else if (response.status === 404) {
+        // Handle daemon not found
+        setShowDeleteConfirm(null)
+        setDeleteError("Daemon not found - it may have already been deleted.")
+      } else {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+    } catch (error) {
+      console.error("Error deleting daemon:", error)
+      setConnectionError(`Failed to delete daemon: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
 
 
   return (
@@ -246,29 +274,51 @@ export default function DaemonAIApp() {
                 )}
 
                 <div className="space-y-3 mb-4">
-                  {daemons.map((daemon) => (
-                    <div
-                      key={daemon.id}
-                      className="relative group flex items-center"
-                    >
+                  {daemons.map((daemon) => {
+                    const isDefaultDaemon = ["devil_advocate", "grammar_enthusiast", "clarity_coach"].includes(daemon.id)
+                    
+                    return (
                       <div
-                        className="w-6 h-6 rounded-full border-2 border-gray-300 shadow-md cursor-pointer hover:scale-110 transition-transform"
-                        style={{ 
-                          backgroundColor: daemon.color,
-                          minWidth: '24px',
-                          minHeight: '24px'
-                        }}
-                        onClick={() => getSuggestionFromDaemon(daemon)}
-                        title={daemon.name}
-                      />
-                      <div 
-                        className="absolute left-10 top-0 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10"
-                        style={{ color: daemon.color }}
+                        key={daemon.id}
+                        className="relative group flex items-center justify-between w-full py-1"
                       >
-                        {daemon.name}
+                        <div className="flex items-center">
+                          <div
+                            className="w-6 h-6 rounded-full border-2 border-gray-300 shadow-md cursor-pointer hover:scale-110 transition-transform"
+                            style={{ 
+                              backgroundColor: daemon.color,
+                              minWidth: '24px',
+                              minHeight: '24px'
+                            }}
+                            onClick={() => getSuggestionFromDaemon(daemon)}
+                            title={daemon.name}
+                          />
+                          <div 
+                            className="ml-3 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap"
+                            style={{ color: daemon.color }}
+                          >
+                            {daemon.name}
+                          </div>
+                        </div>
+                        {!isDefaultDaemon && (
+                          <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setShowDeleteConfirm(daemon.id)
+                              }}
+                              title="Delete Daemon"
+                            >
+                              <X className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                   
                   {/* Debug: Show if no daemons */}
                   {daemons.length === 0 && (
@@ -387,6 +437,52 @@ export default function DaemonAIApp() {
             </Card>
           </div>
         )}
+
+                 {/* Delete Confirmation Modal */}
+         {showDeleteConfirm && (
+           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+             <Card className="w-full max-w-md">
+               <CardHeader>
+                 <CardTitle>Confirm Deletion</CardTitle>
+               </CardHeader>
+               <CardContent className="space-y-4">
+                 <p>Are you sure you want to delete this daemon? This action cannot be undone.</p>
+                 <div className="flex gap-2">
+                   <Button variant="outline" onClick={() => setShowDeleteConfirm(null)} className="flex-1">
+                     Cancel
+                   </Button>
+                   <Button variant="destructive" onClick={() => deleteDaemon(showDeleteConfirm)} className="flex-1">
+                     Delete
+                   </Button>
+                 </div>
+               </CardContent>
+             </Card>
+           </div>
+         )}
+
+         {/* Delete Error Modal */}
+         {deleteError && (
+           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+             <Card className="w-full max-w-md">
+               <CardHeader>
+                 <CardTitle className="text-amber-700">Cannot Delete Daemon</CardTitle>
+               </CardHeader>
+               <CardContent className="space-y-4">
+                 <div className="flex items-start gap-3">
+                   <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                     <span className="text-amber-600 text-sm font-semibold">!</span>
+                   </div>
+                   <p className="text-gray-700">{deleteError}</p>
+                 </div>
+                 <div className="flex justify-end">
+                   <Button onClick={() => setDeleteError(null)}>
+                     OK
+                   </Button>
+                 </div>
+               </CardContent>
+             </Card>
+           </div>
+         )}
       </div>
     </div>
   )
