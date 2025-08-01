@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { TextareaWithCopy } from "@/components/ui/textarea-with-copy"
 import { Label } from "@/components/ui/label"
 import { Plus, Loader2, X } from "lucide-react"
 
@@ -248,13 +249,16 @@ export default function DaemonAIApp() {
             {/* Text Content */}
             <div className="col-span-10 flex flex-col">
               <div className="flex-1 flex flex-col">
-                <Textarea
+                <TextareaWithCopy
                   id="text-input"
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   className="leading-relaxed font-normal text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
-                  style={{ fontSize: '12pt', height: '500px' }}
+                  style={{ fontSize: '12pt', height: '500px', paddingRight: '50px' }}
                   placeholder="Enter your text here..."
+                  onCopyText={(copiedText) => {
+                    console.log('Text copied:', copiedText.length, 'characters')
+                  }}
                 />
               </div>
             </div>
