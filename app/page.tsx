@@ -51,6 +51,76 @@ export default function DaemonAIApp() {
   const containerRef = useRef<HTMLDivElement>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
 
+  // Function to render highlighted text
+  const renderHighlightedText = (text: string, suggestions: Suggestion[]) => {
+    if (suggestions.length === 0) {
+      return text
+    }
+
+    // Sort suggestions by start_index to process them in order
+    const sortedSuggestions = suggestions
+      .filter(s => s.start_index !== undefined && s.end_index !== undefined)
+      .sort((a, b) => (a.start_index || 0) - (b.start_index || 0))
+
+    if (sortedSuggestions.length === 0) {
+      return text
+    }
+
+    const parts: Array<{ text: string; color?: string }> = []
+    let lastIndex = 0
+
+    sortedSuggestions.forEach((suggestion) => {
+      const start = suggestion.start_index || 0
+      const end = suggestion.end_index || 0
+
+      // Add text before this highlight
+      if (start > lastIndex) {
+        parts.push({ text: text.slice(lastIndex, start) })
+      }
+
+      // Add highlighted text
+      parts.push({
+        text: text.slice(start, end),
+        color: suggestion.color
+      })
+
+      lastIndex = end
+    })
+
+    // Add remaining text after last highlight
+    if (lastIndex < text.length) {
+      parts.push({ text: text.slice(lastIndex) })
+    }
+
+    return parts.map((part, index) => {
+      if (part.color) {
+        // Convert hex to rgba for better contrast
+        const hexToRgba = (hex: string, alpha: number) => {
+          const r = parseInt(hex.slice(1, 3), 16)
+          const g = parseInt(hex.slice(3, 5), 16)
+          const b = parseInt(hex.slice(5, 7), 16)
+          return `rgba(${r}, ${g}, ${b}, ${alpha})`
+        }
+        
+        return (
+          <span
+            key={index}
+            style={{
+              backgroundColor: hexToRgba(part.color, 0.4),
+              color: '#000',
+              padding: '2px 4px',
+              borderRadius: '3px',
+              fontWeight: '500'
+            }}
+          >
+            {part.text}
+          </span>
+        )
+      }
+      return part.text
+    })
+  }
+
   // Test backend connection
   const testConnection = async () => {
     try {
@@ -205,6 +275,11 @@ export default function DaemonAIApp() {
     }
   }
 
+  // Clear all highlights
+  const clearHighlights = () => {
+    setSuggestions([])
+    setSelectedSuggestion(null)
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -249,17 +324,42 @@ export default function DaemonAIApp() {
             {/* Text Content */}
             <div className="col-span-10 flex flex-col">
               <div className="flex-1 flex flex-col">
-                <TextareaWithCopy
-                  id="text-input"
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  className="leading-relaxed font-normal text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
-                  style={{ fontSize: '12pt', height: '500px', paddingRight: '50px' }}
-                  placeholder="Enter your text here..."
-                  onCopyText={(copiedText) => {
-                    console.log('Text copied:', copiedText.length, 'characters')
-                  }}
-                />
+                {/* Show highlighted text when suggestions exist, otherwise show regular textarea */}
+                {suggestions.length > 0 ? (
+                  <div className="relative">
+                    <div
+                      className="w-full p-3 border border-gray-300 rounded-md bg-white leading-relaxed font-normal text-gray-900"
+                      style={{ 
+                        fontSize: '12pt', 
+                        height: '500px', 
+                        overflowY: 'auto',
+                        whiteSpace: 'pre-wrap'
+                      }}
+                    >
+                      {renderHighlightedText(text, suggestions)}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={clearHighlights}
+                      className="absolute top-2 right-2"
+                    >
+                      Clear Highlights
+                    </Button>
+                  </div>
+                ) : (
+                  <TextareaWithCopy
+                    id="text-input"
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    className="leading-relaxed font-normal text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
+                    style={{ fontSize: '12pt', height: '500px', paddingRight: '50px' }}
+                    placeholder="Enter your text here..."
+                    onCopyText={(copiedText) => {
+                      console.log('Text copied:', copiedText.length, 'characters')
+                    }}
+                  />
+                )}
               </div>
             </div>
 
@@ -280,6 +380,7 @@ export default function DaemonAIApp() {
                 <div className="space-y-3 mb-4">
                   {daemons.map((daemon) => {
                     const isDefaultDaemon = ["devil_advocate", "grammar_enthusiast", "clarity_coach"].includes(daemon.id)
+                    const hasSuggestion = suggestions.some(s => s.daemon_id === daemon.id)
                     
                     return (
                       <div
@@ -288,12 +389,15 @@ export default function DaemonAIApp() {
                       >
                         <div className="flex items-center">
                           <div
-                            className="w-6 h-6 rounded-full border-2 border-gray-300 shadow-md cursor-pointer hover:scale-110 transition-transform"
+                            className={`w-6 h-6 rounded-full border-2 shadow-md cursor-pointer hover:scale-110 transition-transform ${
+                              hasSuggestion ? 'ring-2 ring-offset-2' : 'border-gray-300'
+                            }`}
                             style={{ 
                               backgroundColor: daemon.color,
                               minWidth: '24px',
-                              minHeight: '24px'
-                            }}
+                              minHeight: '24px',
+                              '--tw-ring-color': hasSuggestion ? daemon.color : undefined
+                            } as React.CSSProperties}
                             onClick={() => getSuggestionFromDaemon(daemon)}
                             title={daemon.name}
                           />
