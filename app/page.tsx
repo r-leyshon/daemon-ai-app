@@ -59,7 +59,7 @@ export default function DaemonAIApp() {
 
     // Sort suggestions by start_index to process them in order
     const sortedSuggestions = suggestions
-      .filter(s => s.start_index !== undefined && s.end_index !== undefined)
+      .filter(s => s.start_index !== undefined && s.end_index !== undefined && s.start_index !== s.end_index)
       .sort((a, b) => (a.start_index || 0) - (b.start_index || 0))
 
     if (sortedSuggestions.length === 0) {

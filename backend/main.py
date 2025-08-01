@@ -117,42 +117,113 @@ def initialize_default_daemons():
 initialize_default_daemons()
 
 def find_text_span(text: str, question: str) -> tuple[str, int, int]:
-    """Find the most relevant text span for a question."""
-    # Extract meaningful words from the question
-    words = re.findall(r'\b\w{4,}\b', question.lower())
-    
-    best_match = ""
-    best_start = 0
-    best_end = 0
-    
-    for word in words:
-        if word in text.lower():
-            # Find the sentence containing this word
-            word_pos = text.lower().find(word)
+    """Find the most relevant text span for a question using AI."""
+    try:
+        # Use AI to identify the specific text span that should be highlighted
+        messages = [
+            {
+                "role": "system",
+                "content": """You are a text analysis assistant. Given a question about a text, identify the specific text span (exact words/phrases) that should be highlighted to show the issue being discussed.
+
+IMPORTANT: 
+- Return ONLY the exact text span that should be highlighted, nothing else. Do not include quotes or explanations.
+- Only highlight text that ACTUALLY EXISTS in the original text.
+- If the issue mentioned in the question does not exist in the text, return "NO_HIGHLIGHT"."""
+            },
+            {
+                "role": "user",
+                "content": f"""TEXT:
+"{text}"
+
+QUESTION: {question}
+
+What specific text span should be highlighted to show the issue being discussed? Return only the exact words/phrases."""
+            }
+        ]
+        
+        response = client.chat.completions.create(
+            model="gpt-4.1-nano-2025-04-14",
+            messages=messages,
+        )
+        
+        span_text = response.choices[0].message.content.strip().strip('"').strip("'")
+        
+        # Check if AI found no issues or no highlight needed
+        if "no specific issues found" in span_text.lower() or "no_highlight" in span_text.lower():
+            # Return empty span to indicate no highlighting needed
+            return "", 0, 0
+        
+        # Find the span in the original text
+        span_lower = span_text.lower()
+        text_lower = text.lower()
+        
+        # Try to find exact match first
+        start_pos = text_lower.find(span_lower)
+        
+        if start_pos != -1:
+            # Found exact match
+            end_pos = start_pos + len(span_text)
+            return span_text, start_pos, end_pos
+        
+        # If no exact match, try to find the closest match
+        # Split into words and find the best partial match
+        span_words = span_text.split()
+        if len(span_words) > 0:
+            # Find the first word of the span
+            first_word = span_words[0]
+            start_pos = text_lower.find(first_word)
             
-            # Find sentence boundaries
-            start = text.rfind('.', 0, word_pos)
-            start = start + 1 if start != -1 else 0
-            
-            end = text.find('.', word_pos)
-            end = end + 1 if end != -1 else len(text)
-            
-            sentence = text[start:end].strip()
-            
-            if len(sentence) > len(best_match):
-                best_match = sentence
-                best_start = start
-                best_end = end
-    
-    # Fallback: return first sentence if no match found
-    if not best_match:
+            if start_pos != -1:
+                # Find a reasonable end point (try to include more words from the span)
+                end_pos = start_pos + len(first_word)
+                
+                # Try to extend to include more words from the span
+                for word in span_words[1:]:
+                    next_pos = text_lower.find(word, end_pos)
+                    if next_pos != -1 and next_pos - end_pos < 50:  # Within reasonable distance
+                        end_pos = next_pos + len(word)
+                    else:
+                        break
+                
+                return text[start_pos:end_pos], start_pos, end_pos
+        
+        # Fallback: return the first sentence if no match found
         end = text.find('.')
         end = end + 1 if end != -1 else min(100, len(text))
-        best_match = text[:end].strip()
+        fallback_text = text[:end].strip()
+        return fallback_text, 0, end
+        
+    except Exception as e:
+        print(f"Error in AI-based text span finding: {e}")
+        # Fallback to original logic
+        words = re.findall(r'\b\w{4,}\b', question.lower())
+        
+        best_match = ""
         best_start = 0
-        best_end = end
-    
-    return best_match, best_start, best_end
+        best_end = 0
+        
+        for word in words:
+            if word in text.lower():
+                word_pos = text.lower().find(word)
+                start = text.rfind('.', 0, word_pos)
+                start = start + 1 if start != -1 else 0
+                end = text.find('.', word_pos)
+                end = end + 1 if end != -1 else len(text)
+                sentence = text[start:end].strip()
+                
+                if len(sentence) > len(best_match):
+                    best_match = sentence
+                    best_start = start
+                    best_end = end
+        
+        if not best_match:
+            end = text.find('.')
+            end = end + 1 if end != -1 else min(100, len(text))
+            best_match = text[:end].strip()
+            best_start = 0
+            best_end = end
+        
+        return best_match, best_start, best_end
 
 def generate_suggestion_for_daemon(text: str, daemon: Daemon) -> str:
     """Generate a suggestion/question for the given text and daemon."""
@@ -174,7 +245,11 @@ def generate_suggestion_for_daemon(text: str, daemon: Daemon) -> str:
         user_content = f"""TEXT:
 "{text}"
 
-As a {daemon.name}, identify one specific issue or opportunity for improvement in this text and ask ONE focused question about it. Your question should be actionable and help the writer improve their work."""
+As a {daemon.name}, identify one specific issue or opportunity for improvement that ACTUALLY EXISTS in this text. 
+
+IMPORTANT: Only identify issues that are actually present in the text. Do not make up or hallucinate problems that don't exist. If you cannot find any relevant issues in this text, respond with "No specific issues found in this text."
+
+Your question should be actionable and help the writer improve their work."""
         
         messages.append({"role": "user", "content": user_content})
         
@@ -312,6 +387,7 @@ def get_suggestion_from_daemon(daemon_id: str, input_data: TextInput):
         )
         
         print(f"Generated suggestion: {question}")  # Debug log
+        print(f"Span text: '{span_text}', start: {start_idx}, end: {end_idx}")  # Debug log
         return {"suggestion": suggestion}
         
     except Exception as e:
