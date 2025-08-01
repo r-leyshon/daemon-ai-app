@@ -326,26 +326,16 @@ export default function DaemonAIApp() {
               <div className="flex-1 flex flex-col">
                 {/* Show highlighted text when suggestions exist, otherwise show regular textarea */}
                 {suggestions.length > 0 ? (
-                  <div className="relative">
-                    <div
-                      className="w-full p-3 border border-gray-300 rounded-md bg-white leading-relaxed font-normal text-gray-900"
-                      style={{ 
-                        fontSize: '12pt', 
-                        height: '500px', 
-                        overflowY: 'auto',
-                        whiteSpace: 'pre-wrap'
-                      }}
-                    >
-                      {renderHighlightedText(text, suggestions)}
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={clearHighlights}
-                      className="absolute top-2 right-2"
-                    >
-                      Clear Highlights
-                    </Button>
+                  <div
+                    className="w-full p-3 border border-gray-300 rounded-md bg-white leading-relaxed font-normal text-gray-900"
+                    style={{ 
+                      fontSize: '12pt', 
+                      height: '500px', 
+                      overflowY: 'auto',
+                      whiteSpace: 'pre-wrap'
+                    }}
+                  >
+                    {renderHighlightedText(text, suggestions)}
                   </div>
                 ) : (
                   <TextareaWithCopy
@@ -454,6 +444,20 @@ export default function DaemonAIApp() {
                     </div>
                   </div>
                 </div>
+
+                {/* Clear Highlights Button */}
+                {suggestions.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={clearHighlights}
+                      className="w-full text-xs"
+                    >
+                      Clear All Highlights
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
