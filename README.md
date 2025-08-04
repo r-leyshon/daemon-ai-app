@@ -1,95 +1,146 @@
 # Daemon AI Assistant
 
-A proof-of-concept implementation of Maggie Appleton's "daemon" AI concept - AI assistants that live alongside your text as contextual margin markers, offering suggestions and critiques.
+AI assistants that live alongside your text, offering contextual suggestions.
+
+## Overview
+
+Daemon AI Assistant is a Next.js application that provides AI-powered writing assistance through specialized "daemons" - each with their own personality and expertise. The daemons analyze your text and provide contextual suggestions for improvement.
 
 ## Features
 
-- **Inline Daemon Markers**: Colored dots in the margin that correspond to different AI personas
-- **Contextual Suggestions**: Each daemon analyzes your text and offers relevant questions/suggestions
-- **Interactive Tooltips**: Hover or click markers to see suggestions and get detailed answers
-- **Custom Daemons**: Create your own AI assistants with custom prompts and personalities
-- **Real-time Analysis**: Text is analyzed as you type or edit
+- **Multiple AI Daemons**: Devil's Advocate, Grammar Enthusiast, Clarity Coach
+- **Contextual Highlighting**: Daemons highlight relevant text sections
+- **Interactive Suggestions**: Click on daemons to get specific feedback
+- **Real-time Analysis**: Get suggestions as you write
 
-## Architecture
+## Tech Stack
 
-- **Frontend**: Next.js with React components for interactive UI
-- **Backend**: FastAPI with OpenAI integration for AI-powered suggestions
-- **Communication**: REST API with CORS enabled for local development
+- **Frontend**: Next.js 14 (App Router), TypeScript, Tailwind CSS
+- **Backend**: Python FastAPI with OpenAI integration
+- **Deployment**: Vercel (both frontend and backend)
 
-## Setup Instructions
+## Quick Start
 
-### Backend Setup
+### Prerequisites
 
-1. Navigate to the backend directory:
-   \`\`\`bash
-   cd backend
-   \`\`\`
+- Node.js 18+ and npm/pnpm
+- Python 3.9+
+- OpenAI API key
+- Vercel CLI: `npm install -g vercel`
 
-2. Install Python dependencies:
-   \`\`\`bash
-   pip install -r requirements.txt
-   \`\`\`
+### Local Development
 
-3. Set up your OpenAI API key:
-   \`\`\`bash
-   export OPENAI_API_KEY="your-api-key-here"
-   \`\`\`
-   Or create a `.env` file with your API key.
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd daemon-ai-app
+   ```
 
-4. Run the FastAPI server:
-   \`\`\`bash
-   python main.py
-   \`\`\`
-   The API will be available at `http://localhost:8000`
-
-### Frontend Setup
-
-1. Install dependencies:
-   \`\`\`bash
+2. **Install frontend dependencies**
+   ```bash
    npm install
-   \`\`\`
+   # or
+   pnpm install
+   ```
 
-2. Run the development server:
-   \`\`\`bash
+3. **Set up environment variables**
+   ```bash
+   # Create .env file in project root
+   echo "OPENAI_API_KEY=your_openai_api_key_here" > .env
+   ```
+
+4. **Start the backend**
+   ```bash
+   cd backend
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   pip install -r requirements.txt
+   python main.py
+   ```
+
+5. **Start the frontend**
+   ```bash
+   # In a new terminal, from project root
    npm run dev
-   \`\`\`
-   The app will be available at `http://localhost:3000`
+   # or
+   pnpm dev
+   ```
 
-## Usage
+6. **Open your browser**
+   Navigate to `http://localhost:3000`
 
-1. **View Sample Text**: The app loads with sample text about language models
-2. **See Daemon Suggestions**: Colored markers appear in the right margin
-3. **Interact with Daemons**: 
-   - Hover over markers to see daemon names
-   - Click markers to see their questions/suggestions
-   - Click "Show Answer" to get detailed AI responses
-4. **Add Custom Daemons**: Click the "Add Daemon" button to create your own AI assistants
-5. **Edit Text**: Modify the text in the textarea to see new suggestions
+## Deployment
 
-## Default Daemons
+This project is configured for deployment on Vercel. See [VERCEL_DEPLOYMENT_GUIDE.md](./VERCEL_DEPLOYMENT_GUIDE.md) for detailed deployment instructions.
 
-- **Devil's Advocate** (Red): Questions assertions and asks for evidence
-- **Summarizer** (Green): Suggests ways to make text more concise
-- **Evidence Finder** (Blue): Identifies claims needing citations
-- **Clarity Coach** (Purple): Points out unclear or confusing passages
+### Quick Deploy
 
-## Technical Details
+1. **Deploy Backend**
+   ```bash
+   cd backend
+   vercel --prod
+   ```
 
-- Uses OpenAI's GPT-3.5-turbo for generating suggestions and answers
-- In-memory storage for daemon definitions (resets on server restart)
-- CORS enabled for local development
-- Responsive design with Tailwind CSS
-- TypeScript for type safety
+2. **Deploy Frontend**
+   ```bash
+   # From project root
+   vercel --prod
+   ```
 
-## Future Enhancements
+3. **Set Environment Variables**
+   ```bash
+   # In backend directory
+   vercel env add OPENAI_API_KEY production
+   ```
 
-- Persistent storage for custom daemons
-- Real-time suggestions as you type
-- Multi-user support with authentication
-- More sophisticated text parsing and span detection
-- Integration with external knowledge bases
-- Export/import daemon configurations
+## Project Structure
 
-## Inspiration
+```
+daemon-ai-app/
+├── app/                    # Next.js frontend (App Router)
+├── components/             # React components
+├── lib/                    # Utilities
+├── public/                 # Static assets
+├── backend/                # Python FastAPI backend
+│   ├── api/
+│   │   └── index.py        # Main API handler
+│   ├── requirements.txt    # Python dependencies
+│   └── vercel.json         # Backend Vercel config
+├── .vercelignore           # Files to exclude from frontend deployment
+├── package.json            # Frontend dependencies
+├── next.config.mjs         # Next.js config
+└── README.md
+```
 
-Based on Maggie Appleton's "Language Model Sketchbook" concept of daemon-like AI assistants that provide contextual help during writing.
+## Available Daemons
+
+### Devil's Advocate
+- **Color**: Red (#e74c3c)
+- **Purpose**: Questions assertions and asks for evidence
+- **Example**: "What evidence supports this claim?"
+
+### Grammar Enthusiast
+- **Color**: Purple (#9b59b6)
+- **Purpose**: Identifies grammatical and style issues
+- **Example**: "Are there any grammatical issues in this text?"
+
+### Clarity Coach
+- **Color**: Blue (#3498db)
+- **Purpose**: Suggests ways to improve clarity
+- **Example**: "Could this be expressed more clearly?"
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test locally
+5. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License.
+
+## Support
+
+For deployment issues, see the [Vercel Deployment Guide](./VERCEL_DEPLOYMENT_GUIDE.md).

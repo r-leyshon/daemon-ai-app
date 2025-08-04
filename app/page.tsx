@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { TextareaWithCopy } from "@/components/ui/textarea-with-copy"
 import { Label } from "@/components/ui/label"
 import { Plus, Loader2, X } from "lucide-react"
+import { getApiBaseUrl } from '../lib/config'
 
 interface Daemon {
   id: string
@@ -31,7 +32,7 @@ interface Suggestion {
 
 const SAMPLE_TEXT = `Language models are not yet good enough to be reliable thinking partners. Their frequent hallucinations make it difficult to know if their factual claims are valid. However, they excel at helping with creative tasks and brainstorming. The technology is advancing rapidly, with new models showing improved reasoning capabilities. Many researchers believe we're approaching a breakthrough in AI reliability. These systems could revolutionize how we work and learn, but we must remain cautious about their current limitations.`
 
-const API_BASE = "http://localhost:8000"
+const API_BASE = getApiBaseUrl()
 
 export default function DaemonAIApp() {
   const [text, setText] = useState(SAMPLE_TEXT)

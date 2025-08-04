@@ -8,12 +8,14 @@ import re
 import uuid
 from dotenv import load_dotenv
 import pathlib
+from config import get_cors_origins
 
-# Load environment variables from .env file in project root
+# Load environment variables from .env file in project root (for local development)
 # Go up from backend/main.py to project root
 project_root = pathlib.Path(__file__).parent.parent
 env_path = project_root / '.env'
-load_dotenv(dotenv_path=env_path)
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
 
 # Debug: Check if API key is loaded
 api_key = os.getenv("OPENAI_API_KEY")
@@ -22,20 +24,30 @@ if not api_key:
     print(f"Project root: {project_root}")
     print(f"Looking for .env file at: {env_path}")
     print(f"File exists: {env_path.exists()}")
-    exit(1)
+    # Don't exit in production, just log the error
+    if os.getenv("VERCEL") is None:
+        exit(1)
 else:
     print(f"✅ OpenAI API key loaded successfully (ending: ...{api_key[-4:]})")
 
 # Initialize OpenAI client with the validated API key
-client = OpenAI(api_key=api_key)
-print("✅ OpenAI client initialized successfully")
+client = None
+try:
+    if api_key:
+        client = OpenAI(api_key=api_key)
+        print("✅ OpenAI client initialized successfully")
+    else:
+        print("⚠️ OpenAI API key not found, client not initialized")
+except Exception as e:
+    print(f"❌ Error initializing OpenAI client: {e}")
+    client = None
 
 app = FastAPI(title="Daemon AI API", description="Backend for daemon-like AI assistants")
 
 # CORS middleware for Next.js frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -119,6 +131,13 @@ initialize_default_daemons()
 def find_text_span(text: str, question: str) -> tuple[str, int, int]:
     """Find the most relevant text span for a question using AI."""
     try:
+        if not client:
+            # Fallback to simple logic when OpenAI client is not available
+            end = text.find('.')
+            end = end + 1 if end != -1 else min(100, len(text))
+            fallback_text = text[:end].strip()
+            return fallback_text, 0, end
+        
         # Use AI to identify the specific text span that should be highlighted
         messages = [
             {
@@ -228,6 +247,9 @@ What specific text span should be highlighted to show the issue being discussed?
 def generate_suggestion_for_daemon(text: str, daemon: Daemon) -> str:
     """Generate a suggestion/question for the given text and daemon."""
     try:
+        if not client:
+            return f"[{daemon.name}] OpenAI client not available. Please check API configuration."
+        
         # Build messages for OpenAI
         messages = [
             {
@@ -270,6 +292,9 @@ Your question should be actionable and help the writer improve their work."""
 def generate_answer(question: str, context: str, daemon: Daemon) -> str:
     """Generate an answer for a daemon's question."""
     try:
+        if not client:
+            return "OpenAI client not available. Please check API configuration."
+        
         messages = [
             {
                 "role": "system",
@@ -411,7 +436,15 @@ def get_answer(request: AnswerRequest):
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "daemons_count": len(daemons)}
+    try:
+        return {
+            "status": "healthy", 
+            "daemons_count": len(daemons),
+            "api_key_configured": bool(os.getenv("OPENAI_API_KEY")),
+            "environment": "production" if os.getenv("VERCEL") else "development"
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
@@ -421,3 +454,11 @@ if __name__ == "__main__":
     print("🔑 Make sure OPENAI_API_KEY is set in your environment")
     print("-" * 50)
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# Vercel serverless function handler
+try:
+    from mangum import Mangum
+    handler = Mangum(app)
+except ImportError:
+    # Fallback for local development
+    handler = app
