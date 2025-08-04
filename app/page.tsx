@@ -467,11 +467,6 @@ export default function DaemonAIApp() {
                             style={{ color: daemon.color, marginLeft: '10px' }}
                           >
                             {daemon.name}
-                            {isSelected && suggestionQueue.length > 1 && (
-                              <span className="ml-1 text-xs bg-gray-200 px-1 rounded">
-                                {suggestionQueue.findIndex(s => s === selectedSuggestion) + 1}/{suggestionQueue.length}
-                              </span>
-                            )}
                           </div>
                         </div>
                         {!isDefaultDaemon && (

@@ -1,3 +1,4 @@
+import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -65,6 +66,12 @@ class Daemon(BaseModel):
 class TextInput(BaseModel):
     text: str
 
+class SuggestionResponse(BaseModel):
+    """Structured response from the AI model containing both question and span information"""
+    response: str
+    start_index: int
+    end_index: int
+
 class Suggestion(BaseModel):
     daemon_id: str
     daemon_name: str
@@ -128,127 +135,16 @@ def initialize_default_daemons():
 # Initialize on startup
 initialize_default_daemons()
 
-def find_text_span(text: str, question: str) -> tuple[str, int, int]:
-    """Find the most relevant text span for a question using AI."""
+
+
+def generate_suggestion_with_span(text: str, daemon: Daemon) -> tuple[str, str, int, int]:
+    """Generate a suggestion/question with text span information in a single API call."""
     try:
         if not client:
-            # Fallback to simple logic when OpenAI client is not available
-            end = text.find('.')
-            end = end + 1 if end != -1 else min(100, len(text))
-            fallback_text = text[:end].strip()
-            return fallback_text, 0, end
-        
-        # Use AI to identify the specific text span that should be highlighted
-        messages = [
-            {
-                "role": "system",
-                "content": """You are a text analysis assistant. Given a question about a text, identify the specific text span (exact words/phrases) that should be highlighted to show the issue being discussed.
-
-IMPORTANT: 
-- Return ONLY the exact text span that should be highlighted, nothing else. Do not include quotes or explanations.
-- Only highlight text that ACTUALLY EXISTS in the original text.
-- If the issue mentioned in the question does not exist in the text, return "NO_HIGHLIGHT"."""
-            },
-            {
-                "role": "user",
-                "content": f"""TEXT:
-"{text}"
-
-QUESTION: {question}
-
-What specific text span should be highlighted to show the issue being discussed? Return only the exact words/phrases."""
-            }
-        ]
-        
-        response = client.chat.completions.create(
-            model="gpt-4.1-nano-2025-04-14",
-            messages=messages,
-        )
-        
-        span_text = response.choices[0].message.content.strip().strip('"').strip("'")
-        
-        # Check if AI found no issues or no highlight needed
-        if "no specific issues found" in span_text.lower() or "no_highlight" in span_text.lower():
-            # Return empty span to indicate no highlighting needed
-            return "", 0, 0
-        
-        # Find the span in the original text
-        span_lower = span_text.lower()
-        text_lower = text.lower()
-        
-        # Try to find exact match first
-        start_pos = text_lower.find(span_lower)
-        
-        if start_pos != -1:
-            # Found exact match
-            end_pos = start_pos + len(span_text)
-            return span_text, start_pos, end_pos
-        
-        # If no exact match, try to find the closest match
-        # Split into words and find the best partial match
-        span_words = span_text.split()
-        if len(span_words) > 0:
-            # Find the first word of the span
-            first_word = span_words[0]
-            start_pos = text_lower.find(first_word)
-            
-            if start_pos != -1:
-                # Find a reasonable end point (try to include more words from the span)
-                end_pos = start_pos + len(first_word)
-                
-                # Try to extend to include more words from the span
-                for word in span_words[1:]:
-                    next_pos = text_lower.find(word, end_pos)
-                    if next_pos != -1 and next_pos - end_pos < 50:  # Within reasonable distance
-                        end_pos = next_pos + len(word)
-                    else:
-                        break
-                
-                return text[start_pos:end_pos], start_pos, end_pos
-        
-        # Fallback: return the first sentence if no match found
-        end = text.find('.')
-        end = end + 1 if end != -1 else min(100, len(text))
-        fallback_text = text[:end].strip()
-        return fallback_text, 0, end
-        
-    except Exception as e:
-        print(f"Error in AI-based text span finding: {e}")
-        # Fallback to original logic
-        words = re.findall(r'\b\w{4,}\b', question.lower())
-        
-        best_match = ""
-        best_start = 0
-        best_end = 0
-        
-        for word in words:
-            if word in text.lower():
-                word_pos = text.lower().find(word)
-                start = text.rfind('.', 0, word_pos)
-                start = start + 1 if start != -1 else 0
-                end = text.find('.', word_pos)
-                end = end + 1 if end != -1 else len(text)
-                sentence = text[start:end].strip()
-                
-                if len(sentence) > len(best_match):
-                    best_match = sentence
-                    best_start = start
-                    best_end = end
-        
-        if not best_match:
-            end = text.find('.')
-            end = end + 1 if end != -1 else min(100, len(text))
-            best_match = text[:end].strip()
-            best_start = 0
-            best_end = end
-        
-        return best_match, best_start, best_end
-
-def generate_suggestion_for_daemon(text: str, daemon: Daemon) -> str:
-    """Generate a suggestion/question for the given text and daemon."""
-    try:
-        if not client:
-            return f"[{daemon.name}] OpenAI client not available. Please check API configuration."
+            # Fallback when OpenAI client is not available
+            fallback_question = f"[{daemon.name}] OpenAI client not available. Please check API configuration."
+            fallback_text = text[:100].strip()
+            return fallback_question, fallback_text, 0, len(fallback_text)
         
         # Build messages for OpenAI
         messages = [
@@ -263,31 +159,101 @@ def generate_suggestion_for_daemon(text: str, daemon: Daemon) -> str:
             messages.append({"role": "user", "content": example["user"]})
             messages.append({"role": "assistant", "content": example["assistant"]})
         
-        # Add the actual task
+        # Add the actual task with structured response format
         user_content = f"""TEXT:
 "{text}"
 
-As a {daemon.name}, identify one specific issue or opportunity for improvement that ACTUALLY EXISTS in this text. 
+As a {daemon.name}, identify one specific issue or opportunity for improvement that ACTUALLY EXISTS in this text.
 
-IMPORTANT: Only identify issues that are actually present in the text. Do not make up or hallucinate problems that don't exist. If you cannot find any relevant issues in this text, respond with "No specific issues found in this text."
+IMPORTANT: 
+- Only identify issues that are actually present in the text. Do not make up or hallucinate problems that don't exist.
+- If you cannot find any relevant issues in this text, respond with "No specific issues found in this text."
+- Your question should be actionable and help the writer improve their work.
+- Be specific about which exact text you're referring to in your suggestion.
 
-Your question should be actionable and help the writer improve their work."""
+RESPONSE FORMAT:
+You must respond with a JSON object in this exact format:
+{{
+    "response": "your question or suggestion here",
+    "start_index": <starting character position of the relevant text span>,
+    "end_index": <ending character position of the relevant text span>
+}}
+
+The start_index and end_index should point to the exact text span that your question is about. 
+- If you find a specific issue, provide the exact character positions of the problematic text.
+- If no specific span is relevant or no issues found, use start_index: 0 and end_index: 0.
+- Make sure the text span you identify actually exists in the original text."""
         
         messages.append({"role": "user", "content": user_content})
         
-        # Call OpenAI
+        # Call OpenAI with structured output
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",
             messages=messages,
-            max_tokens=100,
-            temperature=0.7
+            max_tokens=200,
+            temperature=0.7,
+            response_format={"type": "json_object"}
         )
         
-        return response.choices[0].message.content.strip()
+        # Parse the JSON response
+        response_content = response.choices[0].message.content.strip()
+        
+        try:
+            parsed_response = json.loads(response_content)
+            question = parsed_response.get("response", "")
+            start_index = parsed_response.get("start_index", 0)
+            end_index = parsed_response.get("end_index", 0)
+            
+            # Check if the AI found no issues
+            if "no specific issues found" in question.lower():
+                # Return empty span to indicate no highlighting needed
+                return question, "", 0, 0
+            
+            # Validate indices
+            if start_index < 0:
+                start_index = 0
+            if end_index > len(text):
+                end_index = len(text)
+            if start_index >= end_index:
+                # If indices are invalid, try to find a reasonable fallback
+                # Look for the first sentence or first 100 characters
+                end = text.find('.')
+                end = end + 1 if end != -1 else min(100, len(text))
+                start_index = 0
+                end_index = end
+            
+            # Extract the span text
+            span_text = text[start_index:end_index].strip()
+            
+            # If span is empty or very short, provide a fallback
+            if not span_text or len(span_text) < 10:
+                # Use the first sentence as fallback
+                end = text.find('.')
+                end = end + 1 if end != -1 else min(100, len(text))
+                span_text = text[:end].strip()
+                start_index = 0
+                end_index = end
+            
+            return question, span_text, start_index, end_index
+            
+        except json.JSONDecodeError as e:
+            print(f"Error parsing JSON response: {e}")
+            print(f"Raw response: {response_content}")
+            # Fallback: treat the response as just a question
+            question = response_content.strip()
+            # Use simple fallback logic for span
+            end = text.find('.')
+            end = end + 1 if end != -1 else min(100, len(text))
+            fallback_text = text[:end].strip()
+            return question, fallback_text, 0, end
     
     except Exception as e:
-        print(f"Error generating suggestion: {e}")
-        return f"[{daemon.name}] What could be improved in this section?"
+        print(f"Error generating suggestion with span: {e}")
+        fallback_question = f"[{daemon.name}] What could be improved in this section?"
+        fallback_text = text[:100].strip()
+        return fallback_question, fallback_text, 0, len(fallback_text)
+
+
 
 def generate_answer(question: str, context: str, daemon: Daemon) -> str:
     """Generate an answer for a daemon's question."""
@@ -366,8 +332,7 @@ def get_suggestions(input_data: TextInput):
     for daemon_id, daemon in daemons.items():
         try:
             print(f"Processing daemon: {daemon.name}")  # Debug log
-            question = generate_suggestion_for_daemon(text, daemon)
-            span_text, start_idx, end_idx = find_text_span(text, question)
+            question, span_text, start_idx, end_idx = generate_suggestion_with_span(text, daemon)
             
             suggestion = Suggestion(
                 daemon_id=daemon_id,
@@ -398,8 +363,7 @@ def get_suggestion_from_daemon(daemon_id: str, input_data: TextInput):
     
     try:
         print(f"Processing text with {daemon.name}: {text[:100]}...")  # Debug log
-        question = generate_suggestion_for_daemon(text, daemon)
-        span_text, start_idx, end_idx = find_text_span(text, question)
+        question, span_text, start_idx, end_idx = generate_suggestion_with_span(text, daemon)
         
         suggestion = Suggestion(
             daemon_id=daemon_id,
