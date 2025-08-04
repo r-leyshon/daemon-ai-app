@@ -80,6 +80,8 @@ class Suggestion(BaseModel):
     start_index: Optional[int] = None
     end_index: Optional[int] = None
     color: str
+    suggested_fix: Optional[str] = None
+    is_outdated: bool = False
 
 class AnswerRequest(BaseModel):
     daemon_id: str
@@ -148,14 +150,14 @@ initialize_default_daemons()
 
 
 
-def generate_suggestion_with_span(text: str, daemon: Daemon) -> tuple[str, str, int, int]:
+def generate_suggestion_with_span(text: str, daemon: Daemon) -> tuple[str, str, int, int, str]:
     """Generate a suggestion/question with text span information in a single API call."""
     try:
         if not client:
             # Fallback when OpenAI client is not available
             fallback_question = f"[{daemon.name}] OpenAI client not available. Please check API configuration."
             fallback_text = text[:100].strip()
-            return fallback_question, fallback_text, 0, len(fallback_text)
+            return fallback_question, fallback_text, 0, len(fallback_text), ""
         
         # Build messages for OpenAI
         messages = [
@@ -183,15 +185,23 @@ IMPORTANT:
 - Be specific about which exact text you're referring to in your suggestion.
 
 RESPONSE FORMAT:
-You must respond with a JSON object in this exact format:
+You must respond with a valid JSON object in this exact format:
 {{
     "response": "your question or suggestion here",
-    "text_to_highlight": "the exact text span that your question is about"
+    "text_to_highlight": "the exact text span that your question is about",
+    "suggested_fix": "the specific text that should replace the highlighted text"
 }}
+
+IMPORTANT JSON RULES:
+- Ensure the response is valid JSON with proper closing braces and quotes
+- Use single quotes (') instead of double quotes (") within your text content to avoid JSON parsing issues
+- If you need to quote something, use single quotes like 'example text' not "example text"
+- Make sure all strings are properly terminated
 
 The text_to_highlight should be the exact text from the original text that your question refers to.
 - Copy the text exactly as it appears in the original text.
-- If no specific span is relevant or no issues found, use "text_to_highlight": ""."""
+- The suggested_fix should be the improved version of that text.
+- If no specific span is relevant or no issues found, use "text_to_highlight": "" and "suggested_fix": ""."""
         
         messages.append({"role": "user", "content": user_content})
         
@@ -211,11 +221,12 @@ The text_to_highlight should be the exact text from the original text that your 
             parsed_response = json.loads(response_content)
             question = parsed_response.get("response", "")
             text_to_highlight = parsed_response.get("text_to_highlight", "")
+            suggested_fix = parsed_response.get("suggested_fix", "")
             
             # Check if the AI found no issues
             if "no specific issues found" in question.lower():
                 # Return empty span to indicate no highlighting needed
-                return question, "", 0, 0
+                return question, "", 0, 0, ""
             
             # Find the text_to_highlight in the original text
             if text_to_highlight:
@@ -244,25 +255,70 @@ The text_to_highlight should be the exact text from the original text that your 
             
             print(f"DEBUG: Question: '{question}'")
             print(f"DEBUG: Final span: '{span_text}' at {start_index}-{end_index}")
+            print(f"DEBUG: Suggested fix: '{suggested_fix}'")
             
-            return question, span_text, start_index, end_index
+            return question, span_text, start_index, end_index, suggested_fix
             
         except json.JSONDecodeError as e:
             print(f"Error parsing JSON response: {e}")
             print(f"Raw response: {response_content}")
-            # Fallback: treat the response as just a question
-            question = response_content.strip()
-            # Use simple fallback logic for span
-            end = text.find('.')
-            end = end + 1 if end != -1 else min(100, len(text))
-            fallback_text = text[:end].strip()
-            return question, fallback_text, 0, end
+            
+            # Try to extract the question from the malformed JSON
+            try:
+                # Look for the response field
+                response_match = re.search(r'"response":\s*"([^"]*)"', response_content)
+                question = response_match.group(1) if response_match else "Error parsing suggestion"
+                
+                # Look for text_to_highlight field
+                highlight_match = re.search(r'"text_to_highlight":\s*"([^"]*)"', response_content)
+                text_to_highlight = highlight_match.group(1) if highlight_match else ""
+                
+                # Look for suggested_fix field
+                fix_match = re.search(r'"suggested_fix":\s*"([^"]*)"', response_content)
+                suggested_fix = fix_match.group(1) if fix_match else ""
+                
+                # If we found text_to_highlight, try to locate it in the text
+                if text_to_highlight:
+                    start_index = text.find(text_to_highlight)
+                    if start_index != -1:
+                        end_index = start_index + len(text_to_highlight)
+                        span_text = text_to_highlight
+                        print(f"DEBUG: Recovered text_to_highlight '{text_to_highlight}' at indices {start_index}-{end_index}")
+                    else:
+                        # Fallback to first sentence
+                        end = text.find('.')
+                        end = end + 1 if end != -1 else min(100, len(text))
+                        span_text = text[:end].strip()
+                        start_index = 0
+                        end_index = end
+                else:
+                    # Fallback to first sentence
+                    end = text.find('.')
+                    end = end + 1 if end != -1 else min(100, len(text))
+                    span_text = text[:end].strip()
+                    start_index = 0
+                    end_index = end
+                
+                print(f"DEBUG: Recovered from JSON error - Question: '{question}'")
+                print(f"DEBUG: Recovered span: '{span_text}' at {start_index}-{end_index}")
+                print(f"DEBUG: Recovered fix: '{suggested_fix}'")
+                
+                return question, span_text, start_index, end_index, suggested_fix
+                
+            except Exception as recovery_error:
+                print(f"Error during JSON recovery: {recovery_error}")
+                # Final fallback: treat the response as just a question
+                question = response_content.strip()
+                end = text.find('.')
+                end = end + 1 if end != -1 else min(100, len(text))
+                fallback_text = text[:end].strip()
+                return question, fallback_text, 0, end, ""
     
     except Exception as e:
         print(f"Error generating suggestion with span: {e}")
         fallback_question = f"[{daemon.name}] What could be improved in this section?"
         fallback_text = text[:100].strip()
-        return fallback_question, fallback_text, 0, len(fallback_text)
+        return fallback_question, fallback_text, 0, len(fallback_text), ""
 
 
 
@@ -343,7 +399,7 @@ def get_suggestions(input_data: TextInput):
     for daemon_id, daemon in daemons.items():
         try:
             print(f"Processing daemon: {daemon.name}")  # Debug log
-            question, span_text, start_idx, end_idx = generate_suggestion_with_span(text, daemon)
+            question, span_text, start_idx, end_idx, suggested_fix = generate_suggestion_with_span(text, daemon)
             
             suggestion = Suggestion(
                 daemon_id=daemon_id,
@@ -352,7 +408,8 @@ def get_suggestions(input_data: TextInput):
                 span_text=span_text,
                 start_index=start_idx,
                 end_index=end_idx,
-                color=daemon.color
+                color=daemon.color,
+                suggested_fix=suggested_fix
             )
             suggestions.append(suggestion)
             print(f"Generated suggestion for {daemon.name}: {question}")  # Debug log
@@ -374,7 +431,7 @@ def get_suggestion_from_daemon(daemon_id: str, input_data: TextInput):
     
     try:
         print(f"Processing text with {daemon.name}: {text[:100]}...")  # Debug log
-        question, span_text, start_idx, end_idx = generate_suggestion_with_span(text, daemon)
+        question, span_text, start_idx, end_idx, suggested_fix = generate_suggestion_with_span(text, daemon)
         
         suggestion = Suggestion(
             daemon_id=daemon_id,
@@ -383,7 +440,8 @@ def get_suggestion_from_daemon(daemon_id: str, input_data: TextInput):
             span_text=span_text,
             start_index=start_idx,
             end_index=end_idx,
-            color=daemon.color
+            color=daemon.color,
+            suggested_fix=suggested_fix
         )
         
         print(f"Generated suggestion: {question}")  # Debug log

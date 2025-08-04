@@ -28,6 +28,8 @@ interface Suggestion {
   end_index?: number
   color: string
   answer?: string
+  suggested_fix?: string
+  is_outdated?: boolean
 }
 
 const SAMPLE_TEXT = `Language models are not yet good enough to be reliable thinking partners. Their frequent hallucinations make it difficult to know if their factual claims are valid. However, they excel at helping with creative tasks and brainstorming. The technology is advancing rapidly, with new models showing improved reasoning capabilities. Many researchers believe we're approaching a breakthrough in AI reliability. These systems could revolutionize how we work and learn, but we must remain cautious about their current limitations.`
@@ -44,6 +46,7 @@ export default function DaemonAIApp() {
   const [showAddDaemon, setShowAddDaemon] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [showSuggestedFix, setShowSuggestedFix] = useState(false)
   const [newDaemon, setNewDaemon] = useState({
     name: "",
     prompt: "",
@@ -52,6 +55,14 @@ export default function DaemonAIApp() {
   })
   const containerRef = useRef<HTMLDivElement>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
+
+  // Convert hex to rgba for better contrast
+  const hexToRgba = (hex: string, alpha: number) => {
+    const r = parseInt(hex.slice(1, 3), 16)
+    const g = parseInt(hex.slice(3, 5), 16)
+    const b = parseInt(hex.slice(5, 7), 16)
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`
+  }
 
   // Function to render highlighted text
   const renderHighlightedText = (text: string, suggestions: Suggestion[], selectedSuggestion: Suggestion | null) => {
@@ -66,14 +77,6 @@ export default function DaemonAIApp() {
 
     const start = selectedSuggestion.start_index
     const end = selectedSuggestion.end_index
-
-    // Convert hex to rgba for better contrast
-    const hexToRgba = (hex: string, alpha: number) => {
-      const r = parseInt(hex.slice(1, 3), 16)
-      const g = parseInt(hex.slice(3, 5), 16)
-      const b = parseInt(hex.slice(5, 7), 16)
-      return `rgba(${r}, ${g}, ${b}, ${alpha})`
-    }
 
     return (
       <>
@@ -167,6 +170,7 @@ export default function DaemonAIApp() {
         
         // Always select the latest suggestion (this one)
         setSelectedSuggestion(suggestion)
+        setShowSuggestedFix(false) // Keep collapsed by default for new suggestions
         
         return newQueue
       })
@@ -202,10 +206,26 @@ export default function DaemonAIApp() {
       const data = await response.json()
       setText(data.improved_text)
 
-      // Clear all suggestions since the text has changed and indices are no longer valid
-      setSuggestions([])
-      setSuggestionQueue([])
-      setSelectedSuggestion(null)
+      // Remove the applied suggestion and mark others as outdated
+      setSuggestions(prev => prev.filter(s => s !== suggestion).map(s => ({ ...s, is_outdated: true })))
+      setSuggestionQueue(prev => {
+        const currentIndex = prev.findIndex(s => s === suggestion)
+        const newQueue = prev.filter(s => s !== suggestion).map(s => ({ ...s, is_outdated: true }))
+        
+        // Select the previous suggestion in the queue, or the first one if we were at the beginning
+        let nextIndex = currentIndex - 1
+        if (nextIndex < 0) {
+          nextIndex = 0
+        }
+        if (nextIndex >= newQueue.length) {
+          nextIndex = newQueue.length - 1
+        }
+        
+        const nextSuggestion = newQueue.length > 0 ? newQueue[nextIndex] : null
+        setSelectedSuggestion(nextSuggestion)
+        
+        return newQueue
+      })
     } catch (error) {
       console.error("Error applying suggestion:", error)
       setConnectionError(`Failed to apply suggestion: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -428,8 +448,9 @@ export default function DaemonAIApp() {
                 <div className="space-y-3 mb-4">
                   {daemons.map((daemon) => {
                     const isDefaultDaemon = ["devil_advocate", "grammar_enthusiast", "clarity_coach"].includes(daemon.id)
-                    const hasSuggestion = suggestions.some(s => s.daemon_id === daemon.id)
-                    const isSelected = selectedSuggestion?.daemon_id === daemon.id
+                    
+                    // Debug logging
+                    console.log(`Daemon ${daemon.name}: color=${daemon.color}`)
                     
                     return (
                       <div
@@ -438,17 +459,16 @@ export default function DaemonAIApp() {
                       >
                         <div className="flex items-center">
                           <div
-                            className={`w-6 h-6 rounded-full border-2 shadow-md cursor-pointer hover:scale-110 transition-transform ${
-                              hasSuggestion ? 'ring-2 ring-offset-2' : 'border-gray-300'
-                            } ${isSelected ? 'ring-4' : ''}`}
+                            className="daemon-swatch w-6 h-6 rounded-full border-2 border-gray-300 shadow-md cursor-pointer hover:scale-110 transition-transform"
                             style={{ 
                               backgroundColor: daemon.color,
                               minWidth: '24px',
-                              minHeight: '24px',
-                              '--tw-ring-color': hasSuggestion ? daemon.color : undefined
+                              minHeight: '24px'
                             } as React.CSSProperties}
+                            data-daemon-color={daemon.color}
+                            data-daemon-id={daemon.id}
                             onClick={() => getSuggestionFromDaemon(daemon)}
-                            title={daemon.name}
+                            title={`${daemon.name} (${daemon.color})`}
                           />
                           <div 
                             className="ml-3 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap"
@@ -568,6 +588,57 @@ export default function DaemonAIApp() {
                       </div>
                       <p className="text-gray-700 text-sm mb-3">{selectedSuggestion.question}</p>
 
+                      {/* Show suggested fix if available */}
+                      {selectedSuggestion.suggested_fix && (
+                        <div 
+                          className="mb-3 rounded text-sm border overflow-hidden"
+                          style={{
+                            backgroundColor: hexToRgba(selectedSuggestion.color, 0.1),
+                            borderColor: hexToRgba(selectedSuggestion.color, 0.3)
+                          }}
+                        >
+                          <div 
+                            className="flex items-center justify-between p-2 cursor-pointer hover:bg-opacity-20 transition-colors"
+                            onClick={() => setShowSuggestedFix(!showSuggestedFix)}
+                            style={{ 
+                              color: selectedSuggestion.color,
+                              backgroundColor: hexToRgba(selectedSuggestion.color, 0.05)
+                            }}
+                          >
+                            <div className="font-medium">Suggested Fix</div>
+                            <div 
+                              className="text-xs transition-transform duration-200"
+                              style={{ 
+                                transform: showSuggestedFix ? 'rotate(90deg)' : 'rotate(0deg)'
+                              }}
+                            >
+                              ▶
+                            </div>
+                          </div>
+                          <div 
+                            className="transition-all duration-200 ease-in-out overflow-hidden"
+                            style={{
+                              maxHeight: showSuggestedFix ? '200px' : '0px',
+                              opacity: showSuggestedFix ? 1 : 0
+                            }}
+                          >
+                            <div 
+                              className="px-2 pb-2"
+                              style={{ color: selectedSuggestion.color }}
+                            >
+                              {selectedSuggestion.suggested_fix}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Show outdated indicator */}
+                      {selectedSuggestion.is_outdated && (
+                        <div className="mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm">
+                          <div className="text-yellow-700 font-medium">⚠️ This suggestion may be outdated due to recent text changes</div>
+                        </div>
+                      )}
+
                       {/* Show different buttons based on suggestion type */}
                       {selectedSuggestion && (
                         <div className="flex gap-2 mt-3">
@@ -585,8 +656,9 @@ export default function DaemonAIApp() {
                                 size="sm"
                                 onClick={() => handleApplySuggestion(selectedSuggestion)}
                                 className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
+                                disabled={selectedSuggestion.is_outdated}
                               >
-                                Apply
+                                Fix
                               </Button>
                               <Button
                                 size="sm"
