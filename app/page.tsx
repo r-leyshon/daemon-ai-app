@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { TextareaWithCopy } from "@/components/ui/textarea-with-copy"
 import { Label } from "@/components/ui/label"
-import { Plus, Loader2, X } from "lucide-react"
+import { Plus, Loader2, X, Github } from "lucide-react"
 import { getApiBaseUrl } from '../lib/config'
 
 interface Daemon {
@@ -350,8 +350,21 @@ export default function DaemonAIApp() {
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-6xl mx-auto">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Daemon AI Assistant</h1>
-          <p className="text-gray-600">AI assistants that live alongside your text, offering contextual suggestions</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">Daemon AI Assistant</h1>
+              <p className="text-gray-600">AI assistants that live alongside your text, offering contextual suggestions</p>
+            </div>
+            <a 
+              href="https://github.com/r-leyshon/daemon-ai-app" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-gray-600 hover:text-gray-900 transition-colors"
+              title="View source code on GitHub"
+            >
+              <Github className="w-6 h-6" />
+            </a>
+          </div>
         </div>
 
         {connectionError && (
