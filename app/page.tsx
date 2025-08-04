@@ -111,7 +111,15 @@ export default function DaemonAIApp() {
               color: '#000',
               padding: '2px 4px',
               borderRadius: '3px',
-              fontWeight: '500'
+              fontWeight: '500',
+              cursor: 'pointer'
+            }}
+            onClick={() => {
+              // Find the suggestion for this highlighted text
+              const suggestion = suggestions.find(s => s.color === part.color)
+              if (suggestion) {
+                setSelectedSuggestion(suggestion)
+              }
             }}
           >
             {part.text}
@@ -328,7 +336,7 @@ export default function DaemonAIApp() {
                 {/* Show highlighted text when suggestions exist, otherwise show regular textarea */}
                 {suggestions.length > 0 ? (
                   <div
-                    className="w-full p-3 border border-gray-300 rounded-md bg-white leading-relaxed font-normal text-gray-900"
+                    className="w-full p-3 border border-gray-300 rounded-md bg-white leading-relaxed font-normal text-gray-900 relative"
                     style={{ 
                       fontSize: '12pt', 
                       height: '500px', 
@@ -337,6 +345,47 @@ export default function DaemonAIApp() {
                     }}
                   >
                     {renderHighlightedText(text, suggestions)}
+                    
+                    {/* Suggestion Panel - Bottom Right */}
+                    {selectedSuggestion && (
+                      <div className="absolute bottom-4 right-4 bg-white border rounded-lg shadow-lg p-4 z-10 max-w-sm">
+                        <div className="flex items-start gap-3">
+                          <div
+                            className="w-3 h-3 rounded-full mt-1 flex-shrink-0"
+                            style={{ backgroundColor: selectedSuggestion.color }}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-sm mb-2">
+                              {selectedSuggestion.daemon_name}
+                            </h4>
+                            <p className="text-gray-700 text-sm mb-3">{selectedSuggestion.question}</p>
+
+                            {selectedSuggestion.answer ? (
+                              <div className="bg-gray-50 rounded p-3">
+                                <p className="text-gray-800 text-sm">{selectedSuggestion.answer}</p>
+                              </div>
+                            ) : (
+                              <Button
+                                size="sm"
+                                onClick={() => handleAnswerRequest(selectedSuggestion)}
+                                disabled={loading}
+                                className="text-xs"
+                              >
+                                Get Answer
+                              </Button>
+                            )}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setSelectedSuggestion(null)}
+                            className="h-6 w-6 p-0 text-gray-400 hover:text-gray-600"
+                          >
+                            <X className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <TextareaWithCopy
@@ -463,44 +512,7 @@ export default function DaemonAIApp() {
             </div>
           </div>
 
-          {/* Suggestion Panel */}
-          {selectedSuggestion && (
-            <div className="mt-6 bg-white border rounded-lg shadow-sm p-6">
-              <div className="flex items-start gap-4">
-                <div
-                  className="w-4 h-4 rounded-full mt-1 flex-shrink-0"
-                  style={{ backgroundColor: selectedSuggestion.color }}
-                />
-                <div className="flex-1">
-                  <h4 className="font-semibold mb-2">
-                    {selectedSuggestion.daemon_name}
-                  </h4>
-                  <p className="text-gray-700 mb-4">{selectedSuggestion.question}</p>
 
-                  {selectedSuggestion.answer ? (
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <p className="text-gray-800">{selectedSuggestion.answer}</p>
-                    </div>
-                  ) : (
-                    <Button
-                      size="sm"
-                      onClick={() => handleAnswerRequest(selectedSuggestion)}
-                      disabled={loading}
-                    >
-                      Get Answer
-                    </Button>
-                  )}
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedSuggestion(null)}
-                >
-                  ×
-                </Button>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Add Daemon Modal */}
