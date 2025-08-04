@@ -109,9 +109,6 @@ export default function DaemonAIApp() {
             style={{
               backgroundColor: hexToRgba(part.color, 0.4),
               color: '#000',
-              padding: '2px 4px',
-              borderRadius: '3px',
-              fontWeight: '500',
               cursor: 'pointer'
             }}
             onClick={() => {
@@ -346,67 +343,25 @@ export default function DaemonAIApp() {
 
         <div ref={containerRef} className="relative bg-white rounded-lg shadow-lg p-6">
           <div className="grid grid-cols-12 gap-6 h-full">
+            
             {/* Text Content */}
-            <div className="col-span-10 flex flex-col">
+            <div className="col-span-10 flex flex-col relative">
               <div className="flex-1 flex flex-col">
                 {/* Show highlighted text when suggestions exist, otherwise show regular textarea */}
                 {suggestions.length > 0 ? (
                   <div
-                    className="w-full p-3 border border-gray-300 rounded-md bg-white leading-relaxed font-normal text-gray-900 relative"
+                    className="w-full border border-gray-300 rounded-md bg-white leading-relaxed font-normal text-gray-900 relative"
                     style={{ 
                       fontSize: '12pt', 
                       height: '500px', 
                       overflowY: 'auto',
-                      whiteSpace: 'pre-wrap'
+                      overflowX: 'hidden',
+                      whiteSpace: 'pre-wrap',
+                      padding: '12px 12px 12px 12px',
+                      lineHeight: '1.6'
                     }}
                   >
                     {renderHighlightedText(text, suggestions)}
-                    
-                    {/* Suggestion Panel - Bottom Right */}
-                    {selectedSuggestion && (
-                      <div className="absolute bottom-4 right-4 bg-white border rounded-lg shadow-lg p-4 z-10 max-w-sm">
-                        <div className="flex items-start gap-3">
-                          <div
-                            className="w-3 h-3 rounded-full mt-1 flex-shrink-0"
-                            style={{ backgroundColor: selectedSuggestion.color }}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <h4 className="font-semibold text-sm mb-2">
-                              {selectedSuggestion.daemon_name}
-                            </h4>
-                            <p className="text-gray-700 text-sm mb-3">{selectedSuggestion.question}</p>
-
-                            {/* Only show Apply/Reject buttons if there are actual issues to address */}
-                            {selectedSuggestion && !selectedSuggestion.question.includes("No specific issues found") && (
-                              <div className="flex gap-2 mt-3">
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleApplySuggestion(selectedSuggestion)}
-                                  className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
-                                >
-                                  Apply
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleRejectSuggestion(selectedSuggestion)}
-                                  className="text-xs bg-red-600 hover:bg-red-700 text-white border-red-600"
-                                >
-                                  Reject
-                                </Button>
-                              </div>
-                            )}
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setSelectedSuggestion(null)}
-                            className="h-6 w-6 p-0 text-gray-400 hover:text-gray-600"
-                          >
-                            <X className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 ) : (
                   <TextareaWithCopy
@@ -414,7 +369,13 @@ export default function DaemonAIApp() {
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     className="leading-relaxed font-normal text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
-                    style={{ fontSize: '12pt', height: '500px', paddingRight: '50px' }}
+                    style={{ 
+                      fontSize: '12pt', 
+                      height: '500px', 
+                      padding: '12px 12px 12px 12px',
+                      paddingRight: '50px',
+                      lineHeight: '1.6'
+                    }}
                     placeholder="Enter your text here..."
                     onCopyText={(copiedText) => {
                       console.log('Text copied:', copiedText.length, 'characters')
@@ -530,6 +491,61 @@ export default function DaemonAIApp() {
                   </div>
                 )}
               </div>
+              
+              {/* Suggestion Panel - Floating above text area */}
+              {selectedSuggestion && (
+                <div 
+                  className="absolute bg-white border rounded-lg shadow-lg p-3 z-30"
+                  style={{
+                    position: 'absolute',
+                    bottom: '10px',
+                    right: '195px',
+                    width: '450px',
+                    pointerEvents: 'auto'
+                  }}
+                >
+                  <div className="flex items-start gap-3">
+                    <div
+                      className="w-3 h-3 rounded-full mt-1 flex-shrink-0"
+                      style={{ backgroundColor: selectedSuggestion.color }}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-semibold text-sm mb-2">
+                        {selectedSuggestion.daemon_name}
+                      </h4>
+                      <p className="text-gray-700 text-sm mb-3">{selectedSuggestion.question}</p>
+
+                      {/* Only show Apply/Reject buttons if there are actual issues to address */}
+                      {selectedSuggestion && !selectedSuggestion.question.includes("No specific issues found") && (
+                        <div className="flex gap-2 mt-3">
+                          <Button
+                            size="sm"
+                            onClick={() => handleApplySuggestion(selectedSuggestion)}
+                            className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
+                          >
+                            Apply
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleRejectSuggestion(selectedSuggestion)}
+                            className="text-xs bg-red-600 hover:bg-red-700 text-white border-red-600"
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setSelectedSuggestion(null)}
+                      className="h-6 w-6 p-0 text-gray-400 hover:text-gray-600"
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
