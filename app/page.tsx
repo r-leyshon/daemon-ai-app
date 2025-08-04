@@ -204,30 +204,46 @@ export default function DaemonAIApp() {
     }
   }
 
-  const handleAnswerRequest = async (suggestion: Suggestion) => {
-    if (suggestion.answer) return // Already has answer
-
-    try {
-      const response = await fetch(`${API_BASE}/answer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          daemon_id: suggestion.daemon_id,
-          question: suggestion.question,
-          span_text: suggestion.span_text || "",
-        }),
-      })
-      const data = await response.json()
-
-      // Update suggestion with answer
-      const updatedSuggestions = suggestions.map((s) =>
-        s.daemon_id === suggestion.daemon_id && s.question === suggestion.question ? { ...s, answer: data.answer } : s,
-      )
-      setSuggestions(updatedSuggestions)
-      setSelectedSuggestion({ ...suggestion, answer: data.answer })
-    } catch (error) {
-      console.error("Error getting answer:", error)
+  const handleApplySuggestion = (suggestion: Suggestion) => {
+    if (!suggestion.span_text || suggestion.start_index === undefined || suggestion.end_index === undefined) {
+      return
     }
+
+    // Extract the suggested text from the question (assuming it's in quotes or after a colon)
+    const questionText = suggestion.question
+    let suggestedText = ""
+    
+    // Try to find suggested text in quotes
+    const quoteMatch = questionText.match(/"([^"]+)"/)
+    if (quoteMatch) {
+      suggestedText = quoteMatch[1]
+    } else {
+      // Try to find text after a colon
+      const colonMatch = questionText.match(/:\s*"([^"]+)"/)
+      if (colonMatch) {
+        suggestedText = colonMatch[1]
+      }
+    }
+
+    if (suggestedText) {
+      // Replace the highlighted text with the suggested text
+      const newText = 
+        text.slice(0, suggestion.start_index) + 
+        suggestedText + 
+        text.slice(suggestion.end_index)
+      
+      setText(newText)
+    }
+
+    // Remove this suggestion and close the panel
+    setSuggestions(prev => prev.filter(s => s.daemon_id !== suggestion.daemon_id))
+    setSelectedSuggestion(null)
+  }
+
+  const handleRejectSuggestion = (suggestion: Suggestion) => {
+    // Remove this suggestion and close the panel
+    setSuggestions(prev => prev.filter(s => s.daemon_id !== suggestion.daemon_id))
+    setSelectedSuggestion(null)
   }
 
   const addDaemon = async () => {
@@ -360,19 +376,24 @@ export default function DaemonAIApp() {
                             </h4>
                             <p className="text-gray-700 text-sm mb-3">{selectedSuggestion.question}</p>
 
-                            {selectedSuggestion.answer ? (
-                              <div className="bg-gray-50 rounded p-3">
-                                <p className="text-gray-800 text-sm">{selectedSuggestion.answer}</p>
+                            {/* Only show Apply/Reject buttons if there are actual issues to address */}
+                            {selectedSuggestion && !selectedSuggestion.question.includes("No specific issues found") && (
+                              <div className="flex gap-2 mt-3">
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleApplySuggestion(selectedSuggestion)}
+                                  className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
+                                >
+                                  Apply
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleRejectSuggestion(selectedSuggestion)}
+                                  className="text-xs bg-red-600 hover:bg-red-700 text-white border-red-600"
+                                >
+                                  Reject
+                                </Button>
                               </div>
-                            ) : (
-                              <Button
-                                size="sm"
-                                onClick={() => handleAnswerRequest(selectedSuggestion)}
-                                disabled={loading}
-                                className="text-xs"
-                              >
-                                Get Answer
-                              </Button>
                             )}
                           </div>
                           <Button
