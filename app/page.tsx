@@ -179,51 +179,39 @@ export default function DaemonAIApp() {
     }
   }
 
-  const handleApplySuggestion = (suggestion: Suggestion) => {
-    if (!suggestion.span_text || suggestion.start_index === undefined || suggestion.end_index === undefined) {
-      return
-    }
+  const handleApplySuggestion = async (suggestion: Suggestion) => {
+    setLoading(true)
+    try {
+      const response = await fetch(`${API_BASE}/apply-suggestion`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          original_text: text,
+          suggestion_question: suggestion.question,
+          span_text: suggestion.span_text,
+          start_index: suggestion.start_index,
+          end_index: suggestion.end_index,
+          daemon_name: suggestion.daemon_name
+        }),
+      })
 
-    // Extract the suggested text from the question (assuming it's in quotes or after a colon)
-    const questionText = suggestion.question
-    let suggestedText = ""
-    
-    // Try to find suggested text in quotes
-    const quoteMatch = questionText.match(/"([^"]+)"/)
-    if (quoteMatch) {
-      suggestedText = quoteMatch[1]
-    } else {
-      // Try to find text after a colon
-      const colonMatch = questionText.match(/:\s*"([^"]+)"/)
-      if (colonMatch) {
-        suggestedText = colonMatch[1]
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
-    }
 
-    if (suggestedText) {
-      // Replace the highlighted text with the suggested text
-      const newText = 
-        text.slice(0, suggestion.start_index) + 
-        suggestedText + 
-        text.slice(suggestion.end_index)
-      
-      setText(newText)
-    }
+      const data = await response.json()
+      setText(data.improved_text)
 
-    // Remove only this specific suggestion from both arrays
-    setSuggestions(prev => prev.filter(s => s !== suggestion))
-    setSuggestionQueue(prev => {
-      const newQueue = prev.filter(s => s !== suggestion)
-      
-      // Select the next suggestion in the queue, or null if empty
-      if (newQueue.length > 0) {
-        setSelectedSuggestion(newQueue[0])
-      } else {
-        setSelectedSuggestion(null)
-      }
-      
-      return newQueue
-    })
+      // Clear all suggestions since the text has changed and indices are no longer valid
+      setSuggestions([])
+      setSuggestionQueue([])
+      setSelectedSuggestion(null)
+    } catch (error) {
+      console.error("Error applying suggestion:", error)
+      setConnectionError(`Failed to apply suggestion: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleRejectSuggestion = (suggestion: Suggestion) => {

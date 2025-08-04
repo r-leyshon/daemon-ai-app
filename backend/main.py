@@ -91,6 +91,17 @@ class AnswerResponse(BaseModel):
     question: str
     answer: str
 
+class ApplySuggestionRequest(BaseModel):
+    original_text: str
+    suggestion_question: str
+    span_text: Optional[str] = None
+    start_index: Optional[int] = None
+    end_index: Optional[int] = None
+    daemon_name: str
+
+class ApplySuggestionResponse(BaseModel):
+    improved_text: str
+
 # In-memory daemon storage
 daemons: Dict[str, Daemon] = {}
 
@@ -175,20 +186,18 @@ RESPONSE FORMAT:
 You must respond with a JSON object in this exact format:
 {{
     "response": "your question or suggestion here",
-    "start_index": <starting character position of the relevant text span>,
-    "end_index": <ending character position of the relevant text span>
+    "text_to_highlight": "the exact text span that your question is about"
 }}
 
-The start_index and end_index should point to the exact text span that your question is about. 
-- If you find a specific issue, provide the exact character positions of the problematic text.
-- If no specific span is relevant or no issues found, use start_index: 0 and end_index: 0.
-- Make sure the text span you identify actually exists in the original text."""
+The text_to_highlight should be the exact text from the original text that your question refers to.
+- Copy the text exactly as it appears in the original text.
+- If no specific span is relevant or no issues found, use "text_to_highlight": ""."""
         
         messages.append({"role": "user", "content": user_content})
         
         # Call OpenAI with structured output
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1-2025-04-14",
             messages=messages,
             max_tokens=200,
             temperature=0.7,
@@ -201,38 +210,40 @@ The start_index and end_index should point to the exact text span that your ques
         try:
             parsed_response = json.loads(response_content)
             question = parsed_response.get("response", "")
-            start_index = parsed_response.get("start_index", 0)
-            end_index = parsed_response.get("end_index", 0)
+            text_to_highlight = parsed_response.get("text_to_highlight", "")
             
             # Check if the AI found no issues
             if "no specific issues found" in question.lower():
                 # Return empty span to indicate no highlighting needed
                 return question, "", 0, 0
             
-            # Validate indices
-            if start_index < 0:
-                start_index = 0
-            if end_index > len(text):
-                end_index = len(text)
-            if start_index >= end_index:
-                # If indices are invalid, try to find a reasonable fallback
-                # Look for the first sentence or first 100 characters
-                end = text.find('.')
-                end = end + 1 if end != -1 else min(100, len(text))
-                start_index = 0
-                end_index = end
-            
-            # Extract the span text
-            span_text = text[start_index:end_index].strip()
-            
-            # If span is empty or very short, provide a fallback
-            if not span_text or len(span_text) < 10:
-                # Use the first sentence as fallback
+            # Find the text_to_highlight in the original text
+            if text_to_highlight:
+                start_index = text.find(text_to_highlight)
+                if start_index != -1:
+                    end_index = start_index + len(text_to_highlight)
+                    span_text = text_to_highlight
+                    print(f"DEBUG: Found text_to_highlight '{text_to_highlight}' at indices {start_index}-{end_index}")
+                else:
+                    print(f"DEBUG: Could not find text_to_highlight '{text_to_highlight}' in original text")
+                    # Fallback to first sentence
+                    end = text.find('.')
+                    end = end + 1 if end != -1 else min(100, len(text))
+                    span_text = text[:end].strip()
+                    start_index = 0
+                    end_index = end
+                    print(f"DEBUG: Using fallback span: '{span_text}' at {start_index}-{end_index}")
+            else:
+                # No text to highlight, use fallback
                 end = text.find('.')
                 end = end + 1 if end != -1 else min(100, len(text))
                 span_text = text[:end].strip()
                 start_index = 0
                 end_index = end
+                print(f"DEBUG: No text_to_highlight provided, using fallback: '{span_text}' at {start_index}-{end_index}")
+            
+            print(f"DEBUG: Question: '{question}'")
+            print(f"DEBUG: Final span: '{span_text}' at {start_index}-{end_index}")
             
             return question, span_text, start_index, end_index
             
@@ -397,6 +408,93 @@ def get_answer(request: AnswerRequest):
         question=request.question,
         answer=answer
     )
+
+def apply_suggestion_to_text(original_text: str, suggestion_question: str, span_text: Optional[str] = None, start_index: Optional[int] = None, end_index: Optional[int] = None, daemon_name: str = "") -> str:
+    """Apply a suggestion to improve the given text using GPT-4.1."""
+    try:
+        if not client:
+            raise Exception("OpenAI client not available. Please check API configuration.")
+
+        # Build the prompt based on whether we have a specific span or not
+        if span_text and start_index is not None and end_index is not None:
+            # We have a specific span to focus on
+            system_content = f"You are a helpful assistant that improves text based on suggestions from a {daemon_name}. You will apply the suggestion to the specified text span, making targeted improvements while preserving the overall structure and flow of the text."
+            
+            user_content = f"""ORIGINAL TEXT:
+"{original_text}"
+
+SUGGESTION FROM {daemon_name.upper()}:
+"{suggestion_question}"
+
+TEXT SPAN TO IMPROVE (characters {start_index}-{end_index}):
+"{span_text}"
+
+INSTRUCTIONS:
+- Focus your improvements on the specified text span
+- Apply the suggestion to make the text clearer, more accurate, or better structured
+- Preserve the overall meaning and tone of the original text
+- Return the complete improved text, not just the span
+- Make sure the improved text flows naturally and maintains consistency with the rest of the content
+
+Please provide the complete improved text:"""
+        else:
+            # No specific span, apply to entire text
+            system_content = f"You are a helpful assistant that improves text based on suggestions from a {daemon_name}. You will apply the suggestion to improve the entire text while preserving its core meaning and structure."
+            
+            user_content = f"""ORIGINAL TEXT:
+"{original_text}"
+
+SUGGESTION FROM {daemon_name.upper()}:
+"{suggestion_question}"
+
+INSTRUCTIONS:
+- Apply the suggestion to improve the entire text
+- Make the text clearer, more accurate, or better structured based on the suggestion
+- Preserve the overall meaning and tone of the original text
+- Return the complete improved text
+
+Please provide the complete improved text:"""
+
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content}
+        ]
+
+        response = client.chat.completions.create(
+            model="gpt-4.1-2025-04-14",
+            messages=messages,
+            max_tokens=1000,
+            temperature=0.3
+        )
+        
+        improved_text = response.choices[0].message.content.strip()
+        
+        # Remove any quotes that might have been added
+        if improved_text.startswith('"') and improved_text.endswith('"'):
+            improved_text = improved_text[1:-1]
+        
+        return improved_text
+        
+    except Exception as e:
+        print(f"Error applying suggestion: {e}")
+        raise Exception(f"Failed to apply suggestion: {str(e)}")
+
+@app.post("/apply-suggestion")
+def apply_suggestion_endpoint(request: ApplySuggestionRequest):
+    """Apply a suggestion to improve the given text."""
+    try:
+        improved_text = apply_suggestion_to_text(
+            original_text=request.original_text,
+            suggestion_question=request.suggestion_question,
+            span_text=request.span_text,
+            start_index=request.start_index,
+            end_index=request.end_index,
+            daemon_name=request.daemon_name
+        )
+        return ApplySuggestionResponse(improved_text=improved_text)
+    except Exception as e:
+        print(f"Error in apply suggestion endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
 def health_check():
