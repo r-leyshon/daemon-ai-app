@@ -2,6 +2,10 @@
 
 AI assistants that live alongside your text, offering contextual suggestions.
 
+## Inspiration
+
+This project is inspired by [Maggie Appleton's "Daemons" concept](https://maggieappleton.com/lm-sketchbook) from her Language Model Sketchbook. The idea of having AI assistants with specific personalities that live alongside your text and offer contextual suggestions comes directly from her brilliant exploration of non-chatbot interfaces for language models.
+
 ## Overview
 
 Daemon AI Assistant is a Next.js application that provides AI-powered writing assistance through specialized "daemons" - each with their own personality and expertise. The daemons analyze your text and provide contextual suggestions for improvement.
@@ -128,19 +132,5 @@ daemon-ai-app/
 - **Color**: Blue (#3498db)
 - **Purpose**: Suggests ways to improve clarity
 - **Example**: "Could this be expressed more clearly?"
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test locally
-5. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License.
-
-## Support
 
 For deployment issues, see the [Vercel Deployment Guide](./VERCEL_DEPLOYMENT_GUIDE.md).

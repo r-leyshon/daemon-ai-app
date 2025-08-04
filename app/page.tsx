@@ -27,7 +27,6 @@ interface Suggestion {
   start_index?: number
   end_index?: number
   color: string
-  answer?: string
   suggested_fix?: string
   is_outdated?: boolean
 }

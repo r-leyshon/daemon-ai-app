@@ -83,16 +83,6 @@ class Suggestion(BaseModel):
     suggested_fix: Optional[str] = None
     is_outdated: bool = False
 
-class AnswerRequest(BaseModel):
-    daemon_id: str
-    question: str
-    span_text: str
-
-class AnswerResponse(BaseModel):
-    daemon_id: str
-    question: str
-    answer: str
-
 class ApplySuggestionRequest(BaseModel):
     original_text: str
     suggestion_question: str
@@ -321,41 +311,6 @@ The text_to_highlight should be the exact text from the original text that your 
         return fallback_question, fallback_text, 0, len(fallback_text), ""
 
 
-
-def generate_answer(question: str, context: str, daemon: Daemon) -> str:
-    """Generate an answer for a daemon's question."""
-    try:
-        if not client:
-            return "OpenAI client not available. Please check API configuration."
-        
-        messages = [
-            {
-                "role": "system",
-                "content": f"You are responding as the {daemon.name}. {daemon.guardrails or ''}"
-            },
-            {
-                "role": "user",
-                "content": f"""Context: "{context}"
-
-Question: {question}
-
-Provide a helpful, specific answer or suggestion that addresses this question. Be constructive and actionable."""
-            }
-        ]
-        
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            max_tokens=200,
-            temperature=0.7
-        )
-        
-        return response.choices[0].message.content.strip()
-    
-    except Exception as e:
-        print(f"Error generating answer: {e}")
-        return "I apologize, but I'm having trouble generating a response right now. Please try again."
-
 # API Endpoints
 @app.get("/")
 def read_root():
@@ -388,37 +343,6 @@ def delete_daemon(daemon_id: str):
     deleted_daemon = daemons.pop(daemon_id)
     return {"id": daemon_id, "status": "deleted", "daemon": deleted_daemon}
 
-@app.post("/suggestions")
-def get_suggestions(input_data: TextInput):
-    """Generate suggestions for the given text from all daemons."""
-    text = input_data.text
-    suggestions = []
-    
-    print(f"Processing text: {text[:100]}...")  # Debug log
-    
-    for daemon_id, daemon in daemons.items():
-        try:
-            print(f"Processing daemon: {daemon.name}")  # Debug log
-            question, span_text, start_idx, end_idx, suggested_fix = generate_suggestion_with_span(text, daemon)
-            
-            suggestion = Suggestion(
-                daemon_id=daemon_id,
-                daemon_name=daemon.name,
-                question=question,
-                span_text=span_text,
-                start_index=start_idx,
-                end_index=end_idx,
-                color=daemon.color,
-                suggested_fix=suggested_fix
-            )
-            suggestions.append(suggestion)
-            print(f"Generated suggestion for {daemon.name}: {question}")  # Debug log
-        except Exception as e:
-            print(f"Error processing daemon {daemon_id}: {e}")
-            continue
-    
-    print(f"Returning {len(suggestions)} suggestions")  # Debug log
-    return {"suggestions": suggestions}
 
 @app.post("/suggestion/{daemon_id}")
 def get_suggestion_from_daemon(daemon_id: str, input_data: TextInput):
@@ -452,20 +376,6 @@ def get_suggestion_from_daemon(daemon_id: str, input_data: TextInput):
         print(f"Error processing daemon {daemon_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to generate suggestion: {str(e)}")
 
-@app.post("/answer")
-def get_answer(request: AnswerRequest):
-    """Generate an answer for a specific daemon's question."""
-    daemon = daemons.get(request.daemon_id)
-    if not daemon:
-        raise HTTPException(status_code=404, detail="Daemon not found")
-    
-    answer = generate_answer(request.question, request.span_text, daemon)
-    
-    return AnswerResponse(
-        daemon_id=request.daemon_id,
-        question=request.question,
-        answer=answer
-    )
 
 def apply_suggestion_to_text(original_text: str, suggestion_question: str, span_text: Optional[str] = None, start_index: Optional[int] = None, end_index: Optional[int] = None, daemon_name: str = "") -> str:
     """Apply a suggestion to improve the given text using GPT-4.1."""
