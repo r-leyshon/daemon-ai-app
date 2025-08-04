@@ -40,6 +40,7 @@ export default function DaemonAIApp() {
   const [daemons, setDaemons] = useState<Daemon[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedSuggestion, setSelectedSuggestion] = useState<Suggestion | null>(null)
+  const [suggestionQueue, setSuggestionQueue] = useState<Suggestion[]>([])
   const [showAddDaemon, setShowAddDaemon] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -53,78 +54,49 @@ export default function DaemonAIApp() {
   const [connectionError, setConnectionError] = useState<string | null>(null)
 
   // Function to render highlighted text
-  const renderHighlightedText = (text: string, suggestions: Suggestion[]) => {
+  const renderHighlightedText = (text: string, suggestions: Suggestion[], selectedSuggestion: Suggestion | null) => {
     if (suggestions.length === 0) {
       return text
     }
 
-    // Sort suggestions by start_index to process them in order
-    const sortedSuggestions = suggestions
-      .filter(s => s.start_index !== undefined && s.end_index !== undefined && s.start_index !== s.end_index)
-      .sort((a, b) => (a.start_index || 0) - (b.start_index || 0))
-
-    if (sortedSuggestions.length === 0) {
+    // Only show highlight for the currently selected suggestion
+    if (!selectedSuggestion || selectedSuggestion.start_index === undefined || selectedSuggestion.end_index === undefined) {
       return text
     }
 
-    const parts: Array<{ text: string; color?: string }> = []
-    let lastIndex = 0
+    const start = selectedSuggestion.start_index
+    const end = selectedSuggestion.end_index
 
-    sortedSuggestions.forEach((suggestion) => {
-      const start = suggestion.start_index || 0
-      const end = suggestion.end_index || 0
-
-      // Add text before this highlight
-      if (start > lastIndex) {
-        parts.push({ text: text.slice(lastIndex, start) })
-      }
-
-      // Add highlighted text
-      parts.push({
-        text: text.slice(start, end),
-        color: suggestion.color
-      })
-
-      lastIndex = end
-    })
-
-    // Add remaining text after last highlight
-    if (lastIndex < text.length) {
-      parts.push({ text: text.slice(lastIndex) })
+    // Convert hex to rgba for better contrast
+    const hexToRgba = (hex: string, alpha: number) => {
+      const r = parseInt(hex.slice(1, 3), 16)
+      const g = parseInt(hex.slice(3, 5), 16)
+      const b = parseInt(hex.slice(5, 7), 16)
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`
     }
 
-    return parts.map((part, index) => {
-      if (part.color) {
-        // Convert hex to rgba for better contrast
-        const hexToRgba = (hex: string, alpha: number) => {
-          const r = parseInt(hex.slice(1, 3), 16)
-          const g = parseInt(hex.slice(3, 5), 16)
-          const b = parseInt(hex.slice(5, 7), 16)
-          return `rgba(${r}, ${g}, ${b}, ${alpha})`
-        }
-        
-        return (
-          <span
-            key={index}
-            style={{
-              backgroundColor: hexToRgba(part.color, 0.4),
-              color: '#000',
-              cursor: 'pointer'
-            }}
-            onClick={() => {
-              // Find the suggestion for this highlighted text
-              const suggestion = suggestions.find(s => s.color === part.color)
-              if (suggestion) {
-                setSelectedSuggestion(suggestion)
-              }
-            }}
-          >
-            {part.text}
-          </span>
-        )
-      }
-      return part.text
-    })
+    return (
+      <>
+        {text.slice(0, start)}
+        <span
+          style={{
+            backgroundColor: hexToRgba(selectedSuggestion.color, 0.4),
+            color: '#000',
+            cursor: 'pointer'
+          }}
+          onClick={() => {
+            // Find the suggestion for this highlighted text
+            const suggestion = suggestions.find(s => s.daemon_id === selectedSuggestion.daemon_id)
+            if (suggestion) {
+              setSelectedSuggestion(suggestion)
+            }
+          }}
+        >
+          {text.slice(start, end)}
+        </span>
+        {text.slice(end)}
+      </>
+    )
   }
 
   // Test backend connection
@@ -186,12 +158,18 @@ export default function DaemonAIApp() {
       const data = await response.json()
       const suggestion = data.suggestion
       
-      // Add this suggestion to our list (or replace if it exists)
-      setSuggestions(prev => {
-        const filtered = prev.filter(s => s.daemon_id !== daemon.id)
-        return [...filtered, suggestion]
+      // Add this suggestion to our list (allow multiple from same daemon)
+      setSuggestions(prev => [...prev, suggestion])
+      
+      // Add to suggestion queue (allow multiple from same daemon)
+      setSuggestionQueue(prev => {
+        const newQueue = [...prev, suggestion]
+        
+        // Always select the latest suggestion (this one)
+        setSelectedSuggestion(suggestion)
+        
+        return newQueue
       })
-      setSelectedSuggestion(suggestion)
       
     } catch (error) {
       console.error("Error loading suggestion:", error)
@@ -232,15 +210,54 @@ export default function DaemonAIApp() {
       setText(newText)
     }
 
-    // Remove this suggestion and close the panel
-    setSuggestions(prev => prev.filter(s => s.daemon_id !== suggestion.daemon_id))
-    setSelectedSuggestion(null)
+    // Remove only this specific suggestion from both arrays
+    setSuggestions(prev => prev.filter(s => s !== suggestion))
+    setSuggestionQueue(prev => {
+      const newQueue = prev.filter(s => s !== suggestion)
+      
+      // Select the next suggestion in the queue, or null if empty
+      if (newQueue.length > 0) {
+        setSelectedSuggestion(newQueue[0])
+      } else {
+        setSelectedSuggestion(null)
+      }
+      
+      return newQueue
+    })
   }
 
   const handleRejectSuggestion = (suggestion: Suggestion) => {
-    // Remove this suggestion and close the panel
-    setSuggestions(prev => prev.filter(s => s.daemon_id !== suggestion.daemon_id))
-    setSelectedSuggestion(null)
+    // Remove only this specific suggestion from both arrays
+    setSuggestions(prev => prev.filter(s => s !== suggestion))
+    setSuggestionQueue(prev => {
+      const newQueue = prev.filter(s => s !== suggestion)
+      
+      // Select the next suggestion in the queue, or null if empty
+      if (newQueue.length > 0) {
+        setSelectedSuggestion(newQueue[0])
+      } else {
+        setSelectedSuggestion(null)
+      }
+      
+      return newQueue
+    })
+  }
+
+  const handleDismissSuggestion = (suggestion: Suggestion) => {
+    // Remove only this specific suggestion from both arrays
+    setSuggestions(prev => prev.filter(s => s !== suggestion))
+    setSuggestionQueue(prev => {
+      const newQueue = prev.filter(s => s !== suggestion)
+      
+      // Select the next suggestion in the queue, or null if empty
+      if (newQueue.length > 0) {
+        setSelectedSuggestion(newQueue[0])
+      } else {
+        setSelectedSuggestion(null)
+      }
+      
+      return newQueue
+    })
   }
 
   const addDaemon = async () => {
@@ -280,6 +297,7 @@ export default function DaemonAIApp() {
         setShowDeleteConfirm(null)
         // Clear suggestions from deleted daemon
         setSuggestions(prev => prev.filter(s => s.daemon_id !== daemonId))
+        setSuggestionQueue(prev => prev.filter(s => s.daemon_id !== daemonId))
         // Clear selected suggestion if it's from deleted daemon
         if (selectedSuggestion?.daemon_id === daemonId) {
           setSelectedSuggestion(null)
@@ -300,7 +318,25 @@ export default function DaemonAIApp() {
   // Clear all highlights
   const clearHighlights = () => {
     setSuggestions([])
+    setSuggestionQueue([])
     setSelectedSuggestion(null)
+  }
+
+  // Navigation functions for suggestion queue
+  const goToNextSuggestion = () => {
+    if (!selectedSuggestion || suggestionQueue.length <= 1) return
+    
+    const currentIndex = suggestionQueue.findIndex(s => s === selectedSuggestion)
+    const nextIndex = (currentIndex + 1) % suggestionQueue.length
+    setSelectedSuggestion(suggestionQueue[nextIndex])
+  }
+
+  const goToPreviousSuggestion = () => {
+    if (!selectedSuggestion || suggestionQueue.length <= 1) return
+    
+    const currentIndex = suggestionQueue.findIndex(s => s === selectedSuggestion)
+    const prevIndex = currentIndex === 0 ? suggestionQueue.length - 1 : currentIndex - 1
+    setSelectedSuggestion(suggestionQueue[prevIndex])
   }
 
   return (
@@ -361,7 +397,7 @@ export default function DaemonAIApp() {
                       lineHeight: '1.6'
                     }}
                   >
-                    {renderHighlightedText(text, suggestions)}
+                    {renderHighlightedText(text, suggestions, selectedSuggestion)}
                   </div>
                 ) : (
                   <TextareaWithCopy
@@ -403,6 +439,7 @@ export default function DaemonAIApp() {
                   {daemons.map((daemon) => {
                     const isDefaultDaemon = ["devil_advocate", "grammar_enthusiast", "clarity_coach"].includes(daemon.id)
                     const hasSuggestion = suggestions.some(s => s.daemon_id === daemon.id)
+                    const isSelected = selectedSuggestion?.daemon_id === daemon.id
                     
                     return (
                       <div
@@ -413,7 +450,7 @@ export default function DaemonAIApp() {
                           <div
                             className={`w-6 h-6 rounded-full border-2 shadow-md cursor-pointer hover:scale-110 transition-transform ${
                               hasSuggestion ? 'ring-2 ring-offset-2' : 'border-gray-300'
-                            }`}
+                            } ${isSelected ? 'ring-4' : ''}`}
                             style={{ 
                               backgroundColor: daemon.color,
                               minWidth: '24px',
@@ -428,6 +465,11 @@ export default function DaemonAIApp() {
                             style={{ color: daemon.color, marginLeft: '10px' }}
                           >
                             {daemon.name}
+                            {isSelected && suggestionQueue.length > 1 && (
+                              <span className="ml-1 text-xs bg-gray-200 px-1 rounded">
+                                {suggestionQueue.findIndex(s => s === selectedSuggestion) + 1}/{suggestionQueue.length}
+                              </span>
+                            )}
                           </div>
                         </div>
                         {!isDefaultDaemon && (
@@ -510,39 +552,72 @@ export default function DaemonAIApp() {
                       style={{ backgroundColor: selectedSuggestion.color }}
                     />
                     <div className="flex-1 min-w-0">
-                      <h4 className="font-semibold text-sm mb-2">
-                        {selectedSuggestion.daemon_name}
-                      </h4>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-semibold text-sm">
+                          {selectedSuggestion.daemon_name}
+                        </h4>
+                        {suggestionQueue.length > 1 && (
+                          <div className="flex items-center gap-1 text-xs text-gray-500">
+                            <span>
+                              {suggestionQueue.findIndex(s => s === selectedSuggestion) + 1} of {suggestionQueue.length}
+                            </span>
+                            <div className="flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={goToPreviousSuggestion}
+                                className="h-5 w-5 p-0 text-gray-400 hover:text-gray-600"
+                                title="Previous suggestion"
+                              >
+                                ←
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={goToNextSuggestion}
+                                className="h-5 w-5 p-0 text-gray-400 hover:text-gray-600"
+                                title="Next suggestion"
+                              >
+                                →
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                       <p className="text-gray-700 text-sm mb-3">{selectedSuggestion.question}</p>
 
-                      {/* Only show Apply/Reject buttons if there are actual issues to address */}
-                      {selectedSuggestion && !selectedSuggestion.question.includes("No specific issues found") && (
+                      {/* Show different buttons based on suggestion type */}
+                      {selectedSuggestion && (
                         <div className="flex gap-2 mt-3">
-                          <Button
-                            size="sm"
-                            onClick={() => handleApplySuggestion(selectedSuggestion)}
-                            className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
-                          >
-                            Apply
-                          </Button>
-                          <Button
-                            size="sm"
-                            onClick={() => handleRejectSuggestion(selectedSuggestion)}
-                            className="text-xs bg-red-600 hover:bg-red-700 text-white border-red-600"
-                          >
-                            Reject
-                          </Button>
+                          {selectedSuggestion.question.includes("No specific issues found") ? (
+                            <Button
+                              size="sm"
+                              onClick={() => handleDismissSuggestion(selectedSuggestion)}
+                              className="text-xs bg-gray-600 hover:bg-gray-700 text-white border-gray-600"
+                            >
+                              Dismiss
+                            </Button>
+                          ) : (
+                            <>
+                              <Button
+                                size="sm"
+                                onClick={() => handleApplySuggestion(selectedSuggestion)}
+                                className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
+                              >
+                                Apply
+                              </Button>
+                              <Button
+                                size="sm"
+                                onClick={() => handleRejectSuggestion(selectedSuggestion)}
+                                className="text-xs bg-red-600 hover:bg-red-700 text-white border-red-600"
+                              >
+                                Reject
+                              </Button>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setSelectedSuggestion(null)}
-                      className="h-6 w-6 p-0 text-gray-400 hover:text-gray-600"
-                    >
-                      <X className="w-3 h-3" />
-                    </Button>
                   </div>
                 </div>
               )}
