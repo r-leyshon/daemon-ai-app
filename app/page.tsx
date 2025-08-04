@@ -424,16 +424,18 @@ export default function DaemonAIApp() {
             {/* Daemon Swatches */}
             <div className="col-span-2 relative">
               <div className="sticky top-6">
-                <div className="mb-4">
+                <div className="mb-4 flex items-center gap-2">
                   <h3 className="font-semibold text-sm">Daemons</h3>
+                  {loading && (
+                    <div className="flex items-center gap-2 text-sm text-gray-500">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Analysing...
+                    </div>
+                  )}
+                  {!loading && daemons.length === 0 && (
+                    <div className="text-xs text-gray-500">Loading</div>
+                  )}
                 </div>
-
-                {loading && (
-                  <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Analyzing...
-                  </div>
-                )}
 
                 <div className="space-y-3 mb-4">
                   {daemons.map((daemon) => {
@@ -492,10 +494,7 @@ export default function DaemonAIApp() {
                     )
                   })}
                   
-                  {/* Debug: Show if no daemons */}
-                  {daemons.length === 0 && (
-                    <div className="text-xs text-gray-500">No daemons loaded</div>
-                  )}
+
 
                   {/* Add Daemon Button */}
                   <div className="relative group flex items-center py-1">
