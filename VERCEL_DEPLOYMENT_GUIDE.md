@@ -39,27 +39,106 @@ The app automatically constructs URLs based on Vercel's naming convention:
 - `NODE_ENV`: Set automatically by Vercel
 
 #### Manual Setup Required
-- `OPENAI_API_KEY`: Your OpenAI API key (set manually in Vercel dashboard)
+- `OPENAI_API_KEY`: Your OpenAI API key (set via Vercel CLI or dashboard)
 
-### Simple Deployment
+## Vercel Deployment Quickstart
 
-No setup required - just deploy both services:
+### Prerequisites
 
-```bash
-./deploy-simple.sh
+Before deploying, ensure you have:
+
+1. **OpenAI API Key**: Get yours from [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+2. **Local environment setup**: Copy `.env.example` to `.env` and add your API key
+3. **Vercel CLI**: Install with `npm install -g vercel`
+
+### Quick Deploy
+
+1. **Set up backend environment variable:**
+   ```bash
+   cd backend
+   vercel env add OPENAI_API_KEY
+   # Enter your OpenAI API key when prompted
+   ```
+
+2. **Deploy backend:**
+   ```bash
+   vercel --prod
+   ```
+
+3. **Deploy frontend:**
+   ```bash
+   cd .. && vercel --prod
+   ```
+
+That's it! No URL updates needed.
+
+### How It Works
+
+We use Vercel's stable project URLs that automatically point to the latest deployment:
+
+- **Backend**: `https://daemon-ai-backend-r-leyshons-projects.vercel.app`
+- **Frontend**: `https://daemon-ai-app-r-leyshons-projects.vercel.app`
+
+These URLs never change, so you never need to update configuration files.
+
+### Key Benefits
+
+- **No URL updates required** - Project URLs are stable
+- **Simple deployment** - Just deploy both services
+- **Works every time** - No configuration changes needed
+- **Automatic** - Vercel handles pointing to latest deployments
+- **CORS works out of the box** - Stable URLs prevent cross-origin issues
+- **No deployment loops** - No need to update URLs after deployment
+
+### Cross-Origin (CORS) Configuration
+
+The backend is configured to allow requests from the frontend using stable URLs:
+
+#### Backend CORS Setup: `backend/config.py`
+```python
+def get_cors_origins():
+    """Get CORS origins - uses stable project URLs"""
+    # Always include localhost for development
+    origins = ["http://localhost:3000"]
+
+    # In production, add the stable frontend project URL
+    if os.getenv("VERCEL"):
+        origins.append("https://daemon-ai-app-r-leyshons-projects.vercel.app")
+
+    return origins
 ```
 
-Or deploy manually:
+This ensures the backend accepts requests from:
+- ✅ Local development: `http://localhost:3000`
+- ✅ Production frontend: `https://daemon-ai-app-r-leyshons-projects.vercel.app`
 
-```bash
-# Deploy backend
-cd backend && vercel --prod
+### Frontend Configuration
 
-# Deploy frontend  
-cd .. && vercel --prod
+#### API Base URL: `lib/config.ts`
+```typescript
+export const getApiBaseUrl = (): string => {
+  // In development, use localhost
+  if (process.env.NODE_ENV !== 'production') {
+    return "http://localhost:8000"
+  }
+  // In production, use the stable backend project URL
+  return "https://daemon-ai-backend-r-leyshons-projects.vercel.app"
+}
 ```
 
-## Frontend Deployment
+This ensures the frontend connects to:
+- ✅ Local development: `http://localhost:8000`
+- ✅ Production backend: `https://daemon-ai-backend-r-leyshons-projects.vercel.app`
+
+### Quickstart Troubleshooting
+
+If you see CORS errors, ensure:
+1. Backend is deployed and healthy
+2. Frontend is using the correct stable backend URL
+3. Backend CORS includes the correct stable frontend URL
+4. Both services are using project URLs (not deployment-specific URLs)
+
+## Frontend Deployment (Detailed)
 
 ### Prerequisites
 
@@ -83,13 +162,13 @@ cd .. && vercel --prod
    - Check that the app loads correctly
    - Test backend connectivity
 
-### Configuration
+### Configuration Details
 
 The frontend automatically uses the correct backend URL based on the environment:
 - **Development**: Uses `http://localhost:8000`
-- **Production**: Uses the URL from `config/backend-urls.json`
+- **Production**: Uses the stable backend project URL
 
-## Backend Deployment
+## Backend Deployment (Detailed)
 
 ### Prerequisites
 
@@ -109,10 +188,19 @@ The frontend automatically uses the correct backend URL based on the environment
    vercel --prod
    ```
 
-3. **Configure environment variables:**
-   - Go to Vercel dashboard
-   - Navigate to your backend project
-   - Add `OPENAI_API_KEY` environment variable
+### Environment Variable Configuration
+
+**Option A: Using Vercel CLI (Recommended)**
+```bash
+vercel env add OPENAI_API_KEY
+```
+- Enter your OpenAI API key when prompted
+- Select "Production" environment
+
+**Option B: Using Vercel Dashboard**
+- Go to Vercel dashboard
+- Navigate to your backend project
+- Add `OPENAI_API_KEY` environment variable
 
 ### File Structure
 
@@ -175,6 +263,30 @@ python-dotenv==1.0.0
 ### Backend
 - `OPENAI_API_KEY`: Your OpenAI API key
 - `VERCEL`: Automatically set by Vercel (indicates production environment)
+
+## Updating Environment Variables
+
+### Updating OpenAI API Key
+
+If you need to update your OpenAI API key:
+
+1. **Update local development:**
+   - Edit your `.env` file in the project root
+   - Replace the existing `OPENAI_API_KEY` value
+
+2. **Update Vercel deployment:**
+   ```bash
+   cd backend
+   vercel env rm OPENAI_API_KEY
+   vercel env add OPENAI_API_KEY
+   ```
+   - Enter your new API key when prompted
+   - Select "Production" environment
+
+3. **Redeploy to apply changes:**
+   ```bash
+   vercel --prod
+   ```
 
 ## Troubleshooting
 

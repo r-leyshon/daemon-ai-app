@@ -49,8 +49,11 @@ Daemon AI Assistant is a Next.js application that provides AI-powered writing as
 
 3. **Set up environment variables**
    ```bash
-   # Create .env file in project root
-   echo "OPENAI_API_KEY=your_openai_api_key_here" > .env
+   # Copy the example environment file
+   cp .env.example .env
+   
+   # Edit .env and add your OpenAI API key
+   # Get your key from: https://platform.openai.com/api-keys
    ```
 
 4. **Start the backend**
