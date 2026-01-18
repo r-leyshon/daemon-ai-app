@@ -254,7 +254,8 @@ export default function DaemonAIApp() {
           span_text: suggestion.span_text,
           start_index: suggestion.start_index,
           end_index: suggestion.end_index,
-          daemon_name: suggestion.daemon_name
+          daemon_name: suggestion.daemon_name,
+          suggested_fix: suggestion.suggested_fix
         }),
       })
 

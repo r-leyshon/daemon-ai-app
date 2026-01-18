@@ -1,7 +1,7 @@
 import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 import os
 import uuid
@@ -11,6 +11,14 @@ from config import get_cors_origins
 
 import vertexai
 from vertexai.generative_models import GenerativeModel, GenerationConfig
+
+
+# Pydantic model for structured LLM response
+class DaemonSuggestion(BaseModel):
+    """Structured response from the daemon."""
+    response: str = Field(description="Your suggestion, question, or feedback explaining the issue")
+    text_to_highlight: str = Field(description="The exact text from the input that your response refers to (copy exactly)")
+    suggested_fix: str = Field(description="Your improved/rewritten version of the highlighted text")
 
 # Load environment variables from .env file in project root (for local development)
 # Go up from backend/main.py to project root
@@ -124,6 +132,7 @@ class ApplySuggestionRequest(BaseModel):
     start_index: Optional[int] = None
     end_index: Optional[int] = None
     daemon_name: str
+    suggested_fix: Optional[str] = None  # If provided, use direct replacement
 
 class ApplySuggestionResponse(BaseModel):
     improved_text: str
@@ -200,7 +209,7 @@ def generate_suggestion_with_span(text: str, daemon: Daemon) -> tuple[str, str, 
         else:
             task_instruction = f"""Apply your role as "{daemon.name}" to analyze this text according to your purpose: {daemon.prompt}"""
         
-        # Simple prompt that asks for JSON response
+        # Prompt for structured response
         full_prompt = f"""{system_prompt}
 {examples_text}
 
@@ -209,13 +218,27 @@ TEXT TO ANALYZE:
 
 {task_instruction}
 
-You MUST respond with ONLY a JSON object in this exact format (no other text):
-{{"response": "your suggestion or question", "text_to_highlight": "exact quote from text above", "suggested_fix": "your improved version"}}"""
+Provide:
+- response: Your suggestion, question, or feedback explaining the issue
+- text_to_highlight: Copy the exact text from the input that your response refers to
+- suggested_fix: Your improved/rewritten version of the highlighted text (always provide this - if asking a question, rewrite the text to address your concern)"""
         
-        # Call Vertex AI
+        # Call Vertex AI with JSON schema for structured output
+        response_schema = {
+            "type": "object",
+            "properties": {
+                "response": {"type": "string", "description": "Your suggestion, question, or feedback"},
+                "text_to_highlight": {"type": "string", "description": "Exact text from input to highlight"},
+                "suggested_fix": {"type": "string", "description": "Your improved version of the text"}
+            },
+            "required": ["response", "text_to_highlight", "suggested_fix"]
+        }
+        
         generation_config = GenerationConfig(
-            max_output_tokens=800,
-            temperature=0.7
+            max_output_tokens=2048,
+            temperature=0.7,
+            response_mime_type="application/json",
+            response_schema=response_schema
         )
         
         response = model.generate_content(
@@ -223,55 +246,54 @@ You MUST respond with ONLY a JSON object in this exact format (no other text):
             generation_config=generation_config
         )
         
-        # Get response text
+        # Get response text - with schema enforcement, should be valid JSON
         response_text = response.text
         if not response_text:
             raise Exception("Empty response from Gemini")
         
-        # Clean up and parse JSON
-        response_content = response_text.strip()
+        # Parse JSON response (may be truncated)
+        parsed_response = None
         
-        # Remove markdown code blocks if present (handle various formats)
-        import re as regex
-        # Remove ```json ... ``` blocks
-        code_block_match = regex.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_content, regex.DOTALL)
-        if code_block_match:
-            response_content = code_block_match.group(1)
-        else:
-            # Try simple stripping
-            if response_content.startswith("```json"):
-                response_content = response_content[7:]
-            elif response_content.startswith("```"):
-                response_content = response_content[3:]
-            if response_content.endswith("```"):
-                response_content = response_content[:-3]
-            response_content = response_content.strip()
-        
-        # Find JSON in response
-        json_start = response_content.find("{")
-        json_end = response_content.rfind("}") + 1
-        if json_start != -1 and json_end > json_start:
-            response_content = response_content[json_start:json_end]
-        
+        # Try standard JSON parsing first
         try:
-            parsed_response = json.loads(response_content)
+            parsed_response = json.loads(response_text.strip())
         except json.JSONDecodeError:
-            # JSON parse failed - try to extract just the response field with regex
-            response_match = regex.search(r'"response"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', response_text)
-            if response_match:
-                parsed_response = {
-                    "response": response_match.group(1).replace('\\"', '"'),
-                    "text_to_highlight": "",
-                    "suggested_fix": ""
-                }
-            else:
-                # Final fallback - clean up raw text
-                clean_text = response_text.replace("```json", "").replace("```", "").strip()
-                parsed_response = {
-                    "response": clean_text[:300] if clean_text else "Could not generate suggestion",
-                    "text_to_highlight": "",
-                    "suggested_fix": ""
-                }
+            pass
+        
+        # If parsing failed or incomplete, extract fields manually
+        if not parsed_response or "response" not in parsed_response:
+            import re
+            
+            def extract_json_string(text: str, field: str) -> str:
+                """Extract a string field value from potentially truncated JSON."""
+                pattern = rf'"{field}"\s*:\s*"'
+                match = re.search(pattern, text)
+                if not match:
+                    return ""
+                start = match.end()
+                # Find the end - either closing quote or end of string
+                result = []
+                i = start
+                while i < len(text):
+                    if text[i] == '"' and (i == start or text[i-1] != '\\'):
+                        break
+                    if text[i] == '\\' and i + 1 < len(text):
+                        result.append(text[i+1])
+                        i += 2
+                    else:
+                        result.append(text[i])
+                        i += 1
+                return ''.join(result).strip()
+            
+            parsed_response = {
+                "response": extract_json_string(response_text, "response"),
+                "text_to_highlight": extract_json_string(response_text, "text_to_highlight"),
+                "suggested_fix": extract_json_string(response_text, "suggested_fix")
+            }
+            
+            # If we still couldn't extract response, use a fallback
+            if not parsed_response["response"]:
+                parsed_response["response"] = "Could not parse model response"
         
         # Extract fields from parsed response
         question = parsed_response.get("response", "")
@@ -409,9 +431,13 @@ def get_suggestion_from_daemon(daemon_id: str, input_data: TextInput):
         raise HTTPException(status_code=500, detail=f"Failed to generate suggestion: {str(e)}")
 
 
-def apply_suggestion_to_text(original_text: str, suggestion_question: str, span_text: Optional[str] = None, start_index: Optional[int] = None, end_index: Optional[int] = None, daemon_name: str = "") -> str:
-    """Apply a suggestion to improve the given text using Gemini."""
+def apply_suggestion_to_text(original_text: str, suggestion_question: str, span_text: Optional[str] = None, start_index: Optional[int] = None, end_index: Optional[int] = None, daemon_name: str = "", suggested_fix: Optional[str] = None) -> str:
+    """Apply a suggestion to improve the given text. Uses direct replacement if suggested_fix provided."""
     try:
+        # If we have a suggested_fix and span_text, use direct string replacement (no model call needed)
+        if suggested_fix and span_text and span_text in original_text:
+            return original_text.replace(span_text, suggested_fix, 1)
+        
         if not model:
             raise Exception("Vertex AI not available. Please check GCP configuration.")
 
@@ -491,7 +517,8 @@ def apply_suggestion_endpoint(request: ApplySuggestionRequest):
             span_text=request.span_text,
             start_index=request.start_index,
             end_index=request.end_index,
-            daemon_name=request.daemon_name
+            daemon_name=request.daemon_name,
+            suggested_fix=request.suggested_fix
         )
         return ApplySuggestionResponse(improved_text=improved_text)
     except Exception as e:
