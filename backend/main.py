@@ -65,6 +65,8 @@ class Daemon(BaseModel):
 
 class TextInput(BaseModel):
     text: str
+    # Optional inline daemon config for custom (session-only) daemons
+    daemon_config: Optional[Dict] = None
 
 class SuggestionResponse(BaseModel):
     """Structured response from the AI model containing both question and span information"""
@@ -336,35 +338,66 @@ def list_daemons():
     """Get all available daemons."""
     return {"daemons": list(daemons.values())}
 
+# Note: Custom daemons are now session-only (stored in browser, not on server).
+# These endpoints are kept for backward compatibility but custom daemons 
+# should be handled entirely in the frontend using sessionStorage.
+
 @app.post("/daemons")
 def add_daemon(daemon: Daemon):
-    """Add a new daemon."""
-    daemon_id = daemon.id or str(uuid.uuid4())
+    """Validate a custom daemon config (but don't store it on the server).
+    
+    Custom daemons are now session-only - they should be stored in the 
+    browser's sessionStorage, not on the server. This endpoint validates 
+    the daemon config and returns it with a generated ID.
+    """
+    daemon_id = daemon.id or f"custom_{uuid.uuid4()}"
     daemon.id = daemon_id
-    daemons[daemon_id] = daemon
-    return {"id": daemon_id, "status": "added", "daemon": daemon}
+    # Don't store on server - just validate and return
+    return {"id": daemon_id, "status": "validated", "daemon": daemon, "session_only": True}
 
 @app.delete("/daemons/{daemon_id}")
 def delete_daemon(daemon_id: str):
-    """Delete a daemon by ID."""
-    if daemon_id not in daemons:
-        raise HTTPException(status_code=404, detail="Daemon not found")
+    """Delete endpoint - only works for default daemons (which cannot be deleted).
     
-    # Don't allow deletion of default daemons (optional safeguard)
+    Custom daemons are session-only and managed in the browser.
+    """
     default_daemon_ids = {"devil_advocate", "grammar_enthusiast", "clarity_coach"}
+    
     if daemon_id in default_daemon_ids:
         raise HTTPException(status_code=400, detail="Cannot delete default daemons")
     
-    deleted_daemon = daemons.pop(daemon_id)
-    return {"id": daemon_id, "status": "deleted", "daemon": deleted_daemon}
+    # Custom daemons are not stored on the server
+    # Return success since the daemon doesn't exist on server anyway
+    return {"id": daemon_id, "status": "not_found_on_server", "message": "Custom daemons are session-only and managed in the browser"}
 
 
 @app.post("/suggestion/{daemon_id}")
 def get_suggestion_from_daemon(daemon_id: str, input_data: TextInput):
-    """Generate a suggestion for the given text from a specific daemon."""
-    daemon = daemons.get(daemon_id)
-    if not daemon:
-        raise HTTPException(status_code=404, detail="Daemon not found")
+    """Generate a suggestion for the given text from a specific daemon.
+    
+    For default daemons: looks up daemon by ID from server storage.
+    For custom daemons: uses inline daemon_config from request body (session-only, not stored).
+    """
+    # Check if this is a custom daemon with inline config
+    if input_data.daemon_config:
+        # Use inline config for custom (session-only) daemons
+        try:
+            daemon = Daemon(
+                id=daemon_id,
+                name=input_data.daemon_config.get("name", "Custom Daemon"),
+                prompt=input_data.daemon_config.get("prompt", ""),
+                examples=input_data.daemon_config.get("examples", []),
+                guardrails=input_data.daemon_config.get("guardrails"),
+                color=input_data.daemon_config.get("color", "#f39c12")
+            )
+            print(f"Using inline daemon config for custom daemon: {daemon.name}")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid daemon config: {str(e)}")
+    else:
+        # Look up default daemon from server storage
+        daemon = daemons.get(daemon_id)
+        if not daemon:
+            raise HTTPException(status_code=404, detail="Daemon not found")
     
     text = input_data.text
     

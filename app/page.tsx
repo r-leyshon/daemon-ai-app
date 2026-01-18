@@ -118,8 +118,45 @@ export default function DaemonAIApp() {
     }
   }
 
-  // Load daemons on mount
+  // Helper to check if a daemon is a default (server-side) daemon
+  const isDefaultDaemon = (daemonId: string) => {
+    return ["devil_advocate", "grammar_enthusiast", "clarity_coach"].includes(daemonId)
+  }
+
+  // Load custom daemons from sessionStorage
+  const loadCustomDaemonsFromSession = (): Daemon[] => {
+    try {
+      const stored = sessionStorage.getItem("customDaemons")
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        console.log(`Loaded ${parsed.length} custom daemons from session`)
+        return parsed
+      }
+    } catch (error) {
+      console.error("Error loading custom daemons from session:", error)
+    }
+    return []
+  }
+
+  // Save custom daemons to sessionStorage
+  const saveCustomDaemonsToSession = (customDaemons: Daemon[]) => {
+    try {
+      sessionStorage.setItem("customDaemons", JSON.stringify(customDaemons))
+      console.log(`Saved ${customDaemons.length} custom daemons to session`)
+    } catch (error) {
+      console.error("Error saving custom daemons to session:", error)
+    }
+  }
+
+  // Load daemons on mount - clear custom daemons first for a fresh session
   useEffect(() => {
+    // Clear any custom daemons from previous sessions on page load
+    try {
+      sessionStorage.removeItem("customDaemons")
+      console.log("Cleared custom daemons on page load")
+    } catch (error) {
+      console.error("Error clearing custom daemons:", error)
+    }
     loadDaemons()
   }, [])
 
@@ -128,13 +165,21 @@ export default function DaemonAIApp() {
       const isConnected = await testConnection()
       if (!isConnected) return
 
+      // Load default daemons from server
       const response = await fetch(`${API_BASE}/daemons`)
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
       const data = await response.json()
-      setDaemons(data.daemons)
-      console.log(`Loaded ${data.daemons.length} daemons:`, data.daemons.map((d: Daemon) => d.name))
+      const serverDaemons: Daemon[] = data.daemons
+      
+      // Load custom daemons from sessionStorage
+      const customDaemons = loadCustomDaemonsFromSession()
+      
+      // Merge: server daemons first, then custom daemons
+      const allDaemons = [...serverDaemons, ...customDaemons]
+      setDaemons(allDaemons)
+      console.log(`Loaded ${serverDaemons.length} server daemons + ${customDaemons.length} custom daemons`)
     } catch (error) {
       console.error("Error loading daemons:", error)
       setConnectionError(`Failed to load daemons: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -147,10 +192,25 @@ export default function DaemonAIApp() {
     
     setLoading(true)
     try {
+      // For custom daemons, pass the full daemon config inline
+      // For default daemons, just pass the text (server looks up by ID)
+      const requestBody: { text: string; daemon_config?: object } = { text }
+      
+      if (!isDefaultDaemon(daemon.id)) {
+        // Custom daemon: include full config so server can use it without storing
+        requestBody.daemon_config = {
+          name: daemon.name,
+          prompt: daemon.prompt,
+          examples: daemon.examples || [],
+          guardrails: daemon.guardrails,
+          color: daemon.color
+        }
+      }
+      
       const response = await fetch(`${API_BASE}/suggestion/${daemon.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(requestBody),
       })
 
       if (!response.ok) {
@@ -271,24 +331,28 @@ export default function DaemonAIApp() {
     if (!newDaemon.name || !newDaemon.prompt) return
 
     try {
-      const response = await fetch(`${API_BASE}/daemons`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: newDaemon.name,
-          prompt: newDaemon.prompt,
-          guardrails: newDaemon.guardrails,
-          color: newDaemon.color,
-          examples: [],
-        }),
-      })
-
-      if (response.ok) {
-        setNewDaemon({ name: "", prompt: "", guardrails: "", color: "#f39c12" })
-        setShowAddDaemon(false)
-        await loadDaemons()
-        // No need to call loadSuggestions() here, as the new daemon will be added to the list
+      // Create a new custom daemon with a unique ID
+      const customDaemon: Daemon = {
+        id: `custom_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        name: newDaemon.name,
+        prompt: newDaemon.prompt,
+        examples: [],
+        guardrails: newDaemon.guardrails,
+        color: newDaemon.color,
       }
+      
+      // Add to state
+      setDaemons(prev => [...prev, customDaemon])
+      
+      // Save to sessionStorage (only custom daemons)
+      const existingCustomDaemons = loadCustomDaemonsFromSession()
+      saveCustomDaemonsToSession([...existingCustomDaemons, customDaemon])
+      
+      // Reset form
+      setNewDaemon({ name: "", prompt: "", guardrails: "", color: "#f39c12" })
+      setShowAddDaemon(false)
+      
+      console.log(`Added custom daemon "${customDaemon.name}" (session-only)`)
     } catch (error) {
       console.error("Error adding daemon:", error)
     }
@@ -296,26 +360,33 @@ export default function DaemonAIApp() {
 
   const deleteDaemon = async (daemonId: string) => {
     try {
-      const response = await fetch(`${API_BASE}/daemons/${daemonId}`, {
-        method: "DELETE",
-      })
-      if (response.ok) {
-        setDaemons(prev => prev.filter(d => d.id !== daemonId))
+      // Default daemons cannot be deleted (handled by UI, but double-check)
+      if (isDefaultDaemon(daemonId)) {
+        setDeleteError("Cannot delete default daemons")
         setShowDeleteConfirm(null)
-        // Clear suggestions from deleted daemon
-        setSuggestions(prev => prev.filter(s => s.daemon_id !== daemonId))
-        setSuggestionQueue(prev => prev.filter(s => s.daemon_id !== daemonId))
-        // Clear selected suggestion if it's from deleted daemon
-        if (selectedSuggestion?.daemon_id === daemonId) {
-          setSelectedSuggestion(null)
-        }
-      } else if (response.status === 404) {
-        // Handle daemon not found
-        setShowDeleteConfirm(null)
-        setDeleteError("Daemon not found - it may have already been deleted.")
-      } else {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        return
       }
+      
+      // Remove from state
+      setDaemons(prev => prev.filter(d => d.id !== daemonId))
+      
+      // Remove from sessionStorage
+      const customDaemons = loadCustomDaemonsFromSession()
+      const updatedCustomDaemons = customDaemons.filter(d => d.id !== daemonId)
+      saveCustomDaemonsToSession(updatedCustomDaemons)
+      
+      setShowDeleteConfirm(null)
+      
+      // Clear suggestions from deleted daemon
+      setSuggestions(prev => prev.filter(s => s.daemon_id !== daemonId))
+      setSuggestionQueue(prev => prev.filter(s => s.daemon_id !== daemonId))
+      
+      // Clear selected suggestion if it's from deleted daemon
+      if (selectedSuggestion?.daemon_id === daemonId) {
+        setSelectedSuggestion(null)
+      }
+      
+      console.log(`Deleted custom daemon ${daemonId} from session`)
     } catch (error) {
       console.error("Error deleting daemon:", error)
       setConnectionError(`Failed to delete daemon: ${error instanceof Error ? error.message : 'Unknown error'}`)
