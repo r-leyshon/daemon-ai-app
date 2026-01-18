@@ -4,12 +4,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 import os
-from openai import OpenAI
-import re
 import uuid
 from dotenv import load_dotenv
 import pathlib
 from config import get_cors_origins
+
+import vertexai
+from vertexai.generative_models import GenerativeModel, GenerationConfig
 
 # Load environment variables from .env file in project root (for local development)
 # Go up from backend/main.py to project root
@@ -18,10 +19,38 @@ env_path = project_root / '.env'
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
 
-# Debug: Check if API key is loaded
-api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    print("❌ ERROR: OPENAI_API_KEY not found in environment variables")
+# Vertex AI Configuration
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
+GCP_LOCATION = os.getenv("GCP_LOCATION", "europe-west1")  # Belgium - closest to UK with model availability
+VERTEX_MODEL = os.getenv("VERTEX_MODEL", "gemini-2.0-flash")  # Confirmed working model
+
+# Handle service account credentials
+# For local development: use GOOGLE_APPLICATION_CREDENTIALS env var or vertex-key.json
+# For Vercel: use base64-encoded credentials in GOOGLE_APPLICATION_CREDENTIALS_JSON
+backend_dir = pathlib.Path(__file__).parent
+local_key_path = backend_dir / "vertex-key.json"
+
+if os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"):
+    # Vercel deployment: decode base64 credentials and write to temp file
+    import base64
+    import tempfile
+    try:
+        credentials_content = base64.b64decode(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.json', mode='wb')
+        temp_file.write(credentials_content)
+        temp_file.close()
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_file.name
+        print("✅ Loaded credentials from GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    except Exception as e:
+        print(f"❌ Error decoding GOOGLE_APPLICATION_CREDENTIALS_JSON: {e}")
+elif local_key_path.exists():
+    # Local development: use the vertex-key.json file
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(local_key_path)
+    print(f"✅ Using local credentials from {local_key_path}")
+
+# Debug: Check if GCP Project is configured
+if not GCP_PROJECT_ID:
+    print("❌ ERROR: GCP_PROJECT_ID not found in environment variables")
     print(f"Project root: {project_root}")
     print(f"Looking for .env file at: {env_path}")
     print(f"File exists: {env_path.exists()}")
@@ -29,19 +58,22 @@ if not api_key:
     if os.getenv("VERCEL") is None:
         exit(1)
 else:
-    print(f"✅ OpenAI API key loaded successfully (ending: ...{api_key[-4:]})")
+    print(f"✅ GCP Project ID: {GCP_PROJECT_ID}")
+    print(f"✅ GCP Location: {GCP_LOCATION}")
+    print(f"✅ Using model: {VERTEX_MODEL}")
 
-# Initialize OpenAI client with the validated API key
-client = None
+# Initialize Vertex AI
+model = None
 try:
-    if api_key:
-        client = OpenAI(api_key=api_key)
-        print("✅ OpenAI client initialized successfully")
+    if GCP_PROJECT_ID:
+        vertexai.init(project=GCP_PROJECT_ID, location=GCP_LOCATION)
+        model = GenerativeModel(VERTEX_MODEL)
+        print("✅ Vertex AI initialized successfully")
     else:
-        print("⚠️ OpenAI API key not found, client not initialized")
+        print("⚠️ GCP Project ID not found, model not initialized")
 except Exception as e:
-    print(f"❌ Error initializing OpenAI client: {e}")
-    client = None
+    print(f"❌ Error initializing Vertex AI: {e}")
+    model = None
 
 app = FastAPI(title="Daemon AI API", description="Backend for daemon-like AI assistants")
 
@@ -145,181 +177,133 @@ initialize_default_daemons()
 def generate_suggestion_with_span(text: str, daemon: Daemon) -> tuple[str, str, int, int, str]:
     """Generate a suggestion/question with text span information in a single API call."""
     try:
-        if not client:
-            # Fallback when OpenAI client is not available
-            fallback_question = f"[{daemon.name}] OpenAI client not available. Please check API configuration."
+        if not model:
+            # Fallback when model is not available
+            fallback_question = f"[{daemon.name}] Vertex AI not available. Please check GCP configuration."
             fallback_text = text[:100].strip()
             return fallback_question, fallback_text, 0, len(fallback_text), ""
         
-        # Build messages for OpenAI
-        messages = [
-            {
-                "role": "system", 
-                "content": f"{daemon.prompt} {daemon.guardrails or ''}"
-            }
-        ]
+        # Build the prompt for Gemini
+        system_prompt = f"{daemon.prompt} {daemon.guardrails or ''}"
         
         # Add examples if available
+        examples_text = ""
         for example in daemon.examples:
-            messages.append({"role": "user", "content": example["user"]})
-            messages.append({"role": "assistant", "content": example["assistant"]})
+            examples_text += f"\nUser: {example['user']}\nAssistant: {example['assistant']}\n"
         
-        # Add the actual task with structured response format
         # Check if this is a default "issue-finding" daemon or a custom daemon
         default_daemon_ids = {"devil_advocate", "grammar_enthusiast", "clarity_coach"}
         is_default_daemon = daemon.id in default_daemon_ids
         
         if is_default_daemon:
-            # Default daemons: use the original issue-finding behavior
-            task_instruction = f"""As a {daemon.name}, identify one specific issue or opportunity for improvement that ACTUALLY EXISTS in this text.
-
-IMPORTANT: 
-- Only identify issues that are actually present in the text. Do not make up or hallucinate problems that don't exist.
-- If you cannot find any relevant issues in this text, respond with "No specific issues found in this text."
-- Your question should be actionable and help the writer improve their work.
-- Be specific about which exact text you're referring to in your suggestion."""
+            task_instruction = f"""As a {daemon.name}, identify one specific issue or opportunity for improvement in this text."""
         else:
-            # Custom daemons: let the daemon's own prompt drive the behavior
-            task_instruction = f"""Apply your role as "{daemon.name}" to analyze or transform this text according to your purpose.
-
-Your purpose (from your prompt): {daemon.prompt}
-
-Follow your defined purpose exactly. Your response should reflect your specific role, not generic issue-finding."""
+            task_instruction = f"""Apply your role as "{daemon.name}" to analyze this text according to your purpose: {daemon.prompt}"""
         
-        user_content = f"""TEXT:
+        # Simple prompt that asks for JSON response
+        full_prompt = f"""{system_prompt}
+{examples_text}
+
+TEXT TO ANALYZE:
 "{text}"
 
 {task_instruction}
 
-RESPONSE FORMAT:
-You must respond with a valid JSON object in this exact format:
-{{
-    "response": "your suggestion, question, or transformation here",
-    "text_to_highlight": "the exact text span that your response is about (or the text you transformed)",
-    "suggested_fix": "the specific text that should replace the highlighted text"
-}}
-
-IMPORTANT JSON RULES:
-- Ensure the response is valid JSON with proper closing braces and quotes
-- Use single quotes (') instead of double quotes (") within your text content to avoid JSON parsing issues
-- If you need to quote something, use single quotes like 'example text' not "example text"
-- Make sure all strings are properly terminated
-
-The text_to_highlight should be the exact text from the original text that your response refers to.
-- Copy the text exactly as it appears in the original text.
-- The suggested_fix should be your improved/transformed version of that text.
-- If no specific span is relevant, use "text_to_highlight": "" and "suggested_fix": ""."""
+You MUST respond with ONLY a JSON object in this exact format (no other text):
+{{"response": "your suggestion or question", "text_to_highlight": "exact quote from text above", "suggested_fix": "your improved version"}}"""
         
-        messages.append({"role": "user", "content": user_content})
-        
-        # Call OpenAI with structured output
-        response = client.chat.completions.create(
-            model="gpt-4.1-2025-04-14",
-            messages=messages,
-            max_tokens=200,
-            temperature=0.7,
-            response_format={"type": "json_object"}
+        # Call Vertex AI
+        generation_config = GenerationConfig(
+            max_output_tokens=800,
+            temperature=0.7
         )
         
-        # Parse the JSON response
-        response_content = response.choices[0].message.content.strip()
+        response = model.generate_content(
+            full_prompt,
+            generation_config=generation_config
+        )
+        
+        # Get response text
+        response_text = response.text
+        if not response_text:
+            raise Exception("Empty response from Gemini")
+        
+        # Clean up and parse JSON
+        response_content = response_text.strip()
+        
+        # Remove markdown code blocks if present (handle various formats)
+        import re as regex
+        # Remove ```json ... ``` blocks
+        code_block_match = regex.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_content, regex.DOTALL)
+        if code_block_match:
+            response_content = code_block_match.group(1)
+        else:
+            # Try simple stripping
+            if response_content.startswith("```json"):
+                response_content = response_content[7:]
+            elif response_content.startswith("```"):
+                response_content = response_content[3:]
+            if response_content.endswith("```"):
+                response_content = response_content[:-3]
+            response_content = response_content.strip()
+        
+        # Find JSON in response
+        json_start = response_content.find("{")
+        json_end = response_content.rfind("}") + 1
+        if json_start != -1 and json_end > json_start:
+            response_content = response_content[json_start:json_end]
         
         try:
             parsed_response = json.loads(response_content)
-            question = parsed_response.get("response", "")
-            text_to_highlight = parsed_response.get("text_to_highlight", "")
-            suggested_fix = parsed_response.get("suggested_fix", "")
-            
-            # Check if the AI found no issues
-            if "no specific issues found" in question.lower():
-                # Return empty span to indicate no highlighting needed
-                return question, "", 0, 0, ""
-            
-            # Find the text_to_highlight in the original text
-            if text_to_highlight:
-                start_index = text.find(text_to_highlight)
-                if start_index != -1:
-                    end_index = start_index + len(text_to_highlight)
-                    span_text = text_to_highlight
-                    print(f"DEBUG: Found text_to_highlight '{text_to_highlight}' at indices {start_index}-{end_index}")
-                else:
-                    print(f"DEBUG: Could not find text_to_highlight '{text_to_highlight}' in original text")
-                    # Fallback to first sentence
-                    end = text.find('.')
-                    end = end + 1 if end != -1 else min(100, len(text))
-                    span_text = text[:end].strip()
-                    start_index = 0
-                    end_index = end
-                    print(f"DEBUG: Using fallback span: '{span_text}' at {start_index}-{end_index}")
+        except json.JSONDecodeError:
+            # JSON parse failed - try to extract just the response field with regex
+            response_match = regex.search(r'"response"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', response_text)
+            if response_match:
+                parsed_response = {
+                    "response": response_match.group(1).replace('\\"', '"'),
+                    "text_to_highlight": "",
+                    "suggested_fix": ""
+                }
             else:
-                # No text to highlight, use fallback
+                # Final fallback - clean up raw text
+                clean_text = response_text.replace("```json", "").replace("```", "").strip()
+                parsed_response = {
+                    "response": clean_text[:300] if clean_text else "Could not generate suggestion",
+                    "text_to_highlight": "",
+                    "suggested_fix": ""
+                }
+        
+        # Extract fields from parsed response
+        question = parsed_response.get("response", "")
+        text_to_highlight = parsed_response.get("text_to_highlight", "")
+        suggested_fix = parsed_response.get("suggested_fix", "")
+        
+        # Check if the AI found no issues
+        if "no specific issues found" in question.lower():
+            return question, "", 0, 0, ""
+        
+        # Find the text_to_highlight in the original text
+        if text_to_highlight:
+            start_index = text.find(text_to_highlight)
+            if start_index != -1:
+                end_index = start_index + len(text_to_highlight)
+                span_text = text_to_highlight
+            else:
+                # Fallback to first sentence
                 end = text.find('.')
                 end = end + 1 if end != -1 else min(100, len(text))
                 span_text = text[:end].strip()
                 start_index = 0
                 end_index = end
-                print(f"DEBUG: No text_to_highlight provided, using fallback: '{span_text}' at {start_index}-{end_index}")
-            
-            print(f"DEBUG: Question: '{question}'")
-            print(f"DEBUG: Final span: '{span_text}' at {start_index}-{end_index}")
-            print(f"DEBUG: Suggested fix: '{suggested_fix}'")
-            
-            return question, span_text, start_index, end_index, suggested_fix
-            
-        except json.JSONDecodeError as e:
-            print(f"Error parsing JSON response: {e}")
-            print(f"Raw response: {response_content}")
-            
-            # Try to extract the question from the malformed JSON
-            try:
-                # Look for the response field
-                response_match = re.search(r'"response":\s*"([^"]*)"', response_content)
-                question = response_match.group(1) if response_match else "Error parsing suggestion"
-                
-                # Look for text_to_highlight field
-                highlight_match = re.search(r'"text_to_highlight":\s*"([^"]*)"', response_content)
-                text_to_highlight = highlight_match.group(1) if highlight_match else ""
-                
-                # Look for suggested_fix field
-                fix_match = re.search(r'"suggested_fix":\s*"([^"]*)"', response_content)
-                suggested_fix = fix_match.group(1) if fix_match else ""
-                
-                # If we found text_to_highlight, try to locate it in the text
-                if text_to_highlight:
-                    start_index = text.find(text_to_highlight)
-                    if start_index != -1:
-                        end_index = start_index + len(text_to_highlight)
-                        span_text = text_to_highlight
-                        print(f"DEBUG: Recovered text_to_highlight '{text_to_highlight}' at indices {start_index}-{end_index}")
-                    else:
-                        # Fallback to first sentence
-                        end = text.find('.')
-                        end = end + 1 if end != -1 else min(100, len(text))
-                        span_text = text[:end].strip()
-                        start_index = 0
-                        end_index = end
-                else:
-                    # Fallback to first sentence
-                    end = text.find('.')
-                    end = end + 1 if end != -1 else min(100, len(text))
-                    span_text = text[:end].strip()
-                    start_index = 0
-                    end_index = end
-                
-                print(f"DEBUG: Recovered from JSON error - Question: '{question}'")
-                print(f"DEBUG: Recovered span: '{span_text}' at {start_index}-{end_index}")
-                print(f"DEBUG: Recovered fix: '{suggested_fix}'")
-                
-                return question, span_text, start_index, end_index, suggested_fix
-                
-            except Exception as recovery_error:
-                print(f"Error during JSON recovery: {recovery_error}")
-                # Final fallback: treat the response as just a question
-                question = response_content.strip()
-                end = text.find('.')
-                end = end + 1 if end != -1 else min(100, len(text))
-                fallback_text = text[:end].strip()
-                return question, fallback_text, 0, end, ""
+        else:
+            # No text to highlight, use fallback
+            end = text.find('.')
+            end = end + 1 if end != -1 else min(100, len(text))
+            span_text = text[:end].strip()
+            start_index = 0
+            end_index = end
+        
+        return question, span_text, start_index, end_index, suggested_fix
     
     except Exception as e:
         print(f"Error generating suggestion with span: {e}")
@@ -426,17 +410,17 @@ def get_suggestion_from_daemon(daemon_id: str, input_data: TextInput):
 
 
 def apply_suggestion_to_text(original_text: str, suggestion_question: str, span_text: Optional[str] = None, start_index: Optional[int] = None, end_index: Optional[int] = None, daemon_name: str = "") -> str:
-    """Apply a suggestion to improve the given text using GPT-4.1."""
+    """Apply a suggestion to improve the given text using Gemini."""
     try:
-        if not client:
-            raise Exception("OpenAI client not available. Please check API configuration.")
+        if not model:
+            raise Exception("Vertex AI not available. Please check GCP configuration.")
 
         # Build the prompt based on whether we have a specific span or not
         if span_text and start_index is not None and end_index is not None:
             # We have a specific span to focus on
-            system_content = f"You are a helpful assistant that improves text based on suggestions from a {daemon_name}. You will apply the suggestion to the specified text span, making targeted improvements while preserving the overall structure and flow of the text."
-            
-            user_content = f"""ORIGINAL TEXT:
+            full_prompt = f"""You are a helpful assistant that improves text based on suggestions from a {daemon_name}. 
+
+ORIGINAL TEXT:
 "{original_text}"
 
 SUGGESTION FROM {daemon_name.upper()}:
@@ -455,9 +439,9 @@ INSTRUCTIONS:
 Please provide the complete improved text:"""
         else:
             # No specific span, apply to entire text
-            system_content = f"You are a helpful assistant that improves text based on suggestions from a {daemon_name}. You will apply the suggestion to improve the entire text while preserving its core meaning and structure."
-            
-            user_content = f"""ORIGINAL TEXT:
+            full_prompt = f"""You are a helpful assistant that improves text based on suggestions from a {daemon_name}.
+
+ORIGINAL TEXT:
 "{original_text}"
 
 SUGGESTION FROM {daemon_name.upper()}:
@@ -471,19 +455,21 @@ INSTRUCTIONS:
 
 Please provide the complete improved text:"""
 
-        messages = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": user_content}
-        ]
-
-        response = client.chat.completions.create(
-            model="gpt-4.1-2025-04-14",
-            messages=messages,
-            max_tokens=1000,
+        generation_config = GenerationConfig(
+            max_output_tokens=1000,
             temperature=0.3
         )
         
-        improved_text = response.choices[0].message.content.strip()
+        response = model.generate_content(
+            full_prompt,
+            generation_config=generation_config
+        )
+        
+        # Get text from response
+        if response.text:
+            improved_text = response.text.strip()
+        else:
+            raise Exception("Empty response from Gemini")
         
         # Remove any quotes that might have been added
         if improved_text.startswith('"') and improved_text.endswith('"'):
@@ -518,7 +504,10 @@ def health_check():
         return {
             "status": "healthy", 
             "daemons_count": len(daemons),
-            "api_key_configured": bool(os.getenv("OPENAI_API_KEY")),
+            "gcp_project_configured": bool(GCP_PROJECT_ID),
+            "model_initialized": bool(model),
+            "gcp_location": GCP_LOCATION,
+            "model": VERTEX_MODEL,
             "environment": "production" if os.getenv("VERCEL") else "development"
         }
     except Exception as e:
@@ -529,7 +518,9 @@ if __name__ == "__main__":
     print("🚀 Starting Daemon AI Backend...")
     print("📍 Server will be available at: http://localhost:8000")
     print("📚 API docs will be available at: http://localhost:8000/docs")
-    print("🔑 Make sure OPENAI_API_KEY is set in your environment")
+    print("🔑 Make sure GCP_PROJECT_ID is set in your environment")
+    print(f"🌍 Using Vertex AI in region: {GCP_LOCATION}")
+    print(f"🤖 Model: {VERTEX_MODEL}")
     print("-" * 50)
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
