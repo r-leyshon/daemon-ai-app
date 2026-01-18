@@ -163,22 +163,37 @@ def generate_suggestion_with_span(text: str, daemon: Daemon) -> tuple[str, str, 
             messages.append({"role": "assistant", "content": example["assistant"]})
         
         # Add the actual task with structured response format
-        user_content = f"""TEXT:
-"{text}"
-
-As a {daemon.name}, identify one specific issue or opportunity for improvement that ACTUALLY EXISTS in this text.
+        # Check if this is a default "issue-finding" daemon or a custom daemon
+        default_daemon_ids = {"devil_advocate", "grammar_enthusiast", "clarity_coach"}
+        is_default_daemon = daemon.id in default_daemon_ids
+        
+        if is_default_daemon:
+            # Default daemons: use the original issue-finding behavior
+            task_instruction = f"""As a {daemon.name}, identify one specific issue or opportunity for improvement that ACTUALLY EXISTS in this text.
 
 IMPORTANT: 
 - Only identify issues that are actually present in the text. Do not make up or hallucinate problems that don't exist.
 - If you cannot find any relevant issues in this text, respond with "No specific issues found in this text."
 - Your question should be actionable and help the writer improve their work.
-- Be specific about which exact text you're referring to in your suggestion.
+- Be specific about which exact text you're referring to in your suggestion."""
+        else:
+            # Custom daemons: let the daemon's own prompt drive the behavior
+            task_instruction = f"""Apply your role as "{daemon.name}" to analyze or transform this text according to your purpose.
+
+Your purpose (from your prompt): {daemon.prompt}
+
+Follow your defined purpose exactly. Your response should reflect your specific role, not generic issue-finding."""
+        
+        user_content = f"""TEXT:
+"{text}"
+
+{task_instruction}
 
 RESPONSE FORMAT:
 You must respond with a valid JSON object in this exact format:
 {{
-    "response": "your question or suggestion here",
-    "text_to_highlight": "the exact text span that your question is about",
+    "response": "your suggestion, question, or transformation here",
+    "text_to_highlight": "the exact text span that your response is about (or the text you transformed)",
     "suggested_fix": "the specific text that should replace the highlighted text"
 }}
 
@@ -188,10 +203,10 @@ IMPORTANT JSON RULES:
 - If you need to quote something, use single quotes like 'example text' not "example text"
 - Make sure all strings are properly terminated
 
-The text_to_highlight should be the exact text from the original text that your question refers to.
+The text_to_highlight should be the exact text from the original text that your response refers to.
 - Copy the text exactly as it appears in the original text.
-- The suggested_fix should be the improved version of that text.
-- If no specific span is relevant or no issues found, use "text_to_highlight": "" and "suggested_fix": ""."""
+- The suggested_fix should be your improved/transformed version of that text.
+- If no specific span is relevant, use "text_to_highlight": "" and "suggested_fix": ""."""
         
         messages.append({"role": "user", "content": user_content})
         
