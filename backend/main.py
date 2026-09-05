@@ -29,8 +29,11 @@ if env_path.exists():
 
 # Vertex AI Configuration
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
-GCP_LOCATION = os.getenv("GCP_LOCATION", "europe-west1")  # Belgium - closest to UK with model availability
-VERTEX_MODEL = os.getenv("VERTEX_MODEL", "gemini-2.0-flash")  # Confirmed working model
+GCP_LOCATION = os.getenv("GCP_LOCATION", "europe-west2")  # London - has newer model availability
+VERTEX_MODEL = os.getenv("VERTEX_MODEL", "gemini-3.5-flash")  # Default model (gemini-2.0-flash deprecated June 2026)
+
+# Model fallback order for resilience against deprecations
+MODEL_FALLBACK_ORDER = ['gemini-3.5-flash', 'gemini-2.5-flash']
 
 # Handle service account credentials
 # For local development: use GOOGLE_APPLICATION_CREDENTIALS env var or vertex-key.json
@@ -68,20 +71,108 @@ if not GCP_PROJECT_ID:
 else:
     print(f"✅ GCP Project ID: {GCP_PROJECT_ID}")
     print(f"✅ GCP Location: {GCP_LOCATION}")
-    print(f"✅ Using model: {VERTEX_MODEL}")
+    print(f"✅ Preferred model: {VERTEX_MODEL}")
+    print(f"✅ Model fallback order: {MODEL_FALLBACK_ORDER}")
 
-# Initialize Vertex AI
+# Initialize Vertex AI with fallback support
 model = None
-try:
-    if GCP_PROJECT_ID:
-        vertexai.init(project=GCP_PROJECT_ID, location=GCP_LOCATION)
-        model = GenerativeModel(VERTEX_MODEL)
-        print("✅ Vertex AI initialized successfully")
-    else:
+active_model_name = None
+
+def initialize_model_with_fallback(preferred_model: str = None) -> tuple:
+    """Initialize Vertex AI model with fallback on 404 errors.
+    
+    Returns:
+        tuple: (model instance or None, model name or None)
+    """
+    if not GCP_PROJECT_ID:
         print("⚠️ GCP Project ID not found, model not initialized")
+        return None, None
+    
+    # Build list of models to try
+    models_to_try = [preferred_model] if preferred_model else []
+    models_to_try.extend([m for m in MODEL_FALLBACK_ORDER if m != preferred_model])
+    
+    vertexai.init(project=GCP_PROJECT_ID, location=GCP_LOCATION)
+    
+    last_error = None
+    for model_id in models_to_try:
+        try:
+            test_model = GenerativeModel(model_id)
+            # Quick validation - try to access the model (doesn't make an API call)
+            print(f"✅ Vertex AI initialized successfully with model: {model_id}")
+            return test_model, model_id
+        except Exception as e:
+            last_error = e
+            error_str = str(e).lower()
+            # Check for 404/not found errors - try next model
+            if '404' in error_str or 'not found' in error_str or 'does not exist' in error_str:
+                print(f"⚠️ Model {model_id} not available, trying next...")
+                continue
+            # Non-404 errors - raise immediately
+            print(f"❌ Error initializing Vertex AI with {model_id}: {e}")
+            raise
+    
+    # All models failed
+    if last_error:
+        print(f"❌ All models failed. Last error: {last_error}")
+    return None, None
+
+try:
+    model, active_model_name = initialize_model_with_fallback(VERTEX_MODEL)
 except Exception as e:
     print(f"❌ Error initializing Vertex AI: {e}")
     model = None
+    active_model_name = None
+
+
+def call_model_with_fallback(prompt: str, generation_config):
+    """Execute model generation with automatic fallback on 404 errors.
+    
+    If the current model returns a 404 error, tries other models in the fallback order.
+    Updates the global model and active_model_name on successful fallback.
+    
+    Returns:
+        The model response object
+    
+    Raises:
+        Exception: If all models fail
+    """
+    global model, active_model_name
+    
+    if not model:
+        raise Exception("No model initialized. Please check GCP configuration.")
+    
+    # Build list of models to try, starting with current model
+    models_to_try = [active_model_name] if active_model_name else []
+    models_to_try.extend([m for m in MODEL_FALLBACK_ORDER if m != active_model_name])
+    
+    last_error = None
+    for model_id in models_to_try:
+        try:
+            current_model = GenerativeModel(model_id) if model_id != active_model_name else model
+            response = current_model.generate_content(prompt, generation_config=generation_config)
+            
+            # If we switched models, update the global state
+            if model_id != active_model_name:
+                print(f"✅ Switched to model: {model_id}")
+                model = current_model
+                active_model_name = model_id
+            
+            return response
+            
+        except Exception as e:
+            last_error = e
+            error_str = str(e).lower()
+            # Check for 404/not found/deprecated errors
+            if '404' in error_str or 'not found' in error_str or 'deprecated' in error_str or 'does not exist' in error_str:
+                print(f"⚠️ Model {model_id} not available (404), trying next...")
+                continue
+            # Non-404 errors - raise immediately
+            raise
+    
+    # All models failed
+    raise last_error if last_error else Exception("All models failed")
+
 
 app = FastAPI(title="Daemon AI API", description="Backend for daemon-like AI assistants")
 
@@ -241,10 +332,8 @@ Provide:
             response_schema=response_schema
         )
         
-        response = model.generate_content(
-            full_prompt,
-            generation_config=generation_config
-        )
+        # Use fallback-enabled model call for resilience against model deprecations
+        response = call_model_with_fallback(full_prompt, generation_config)
         
         # Get response text - with schema enforcement, should be valid JSON
         response_text = response.text
@@ -486,10 +575,8 @@ Please provide the complete improved text:"""
             temperature=0.3
         )
         
-        response = model.generate_content(
-            full_prompt,
-            generation_config=generation_config
-        )
+        # Use fallback-enabled model call for resilience against model deprecations
+        response = call_model_with_fallback(full_prompt, generation_config)
         
         # Get text from response
         if response.text:
@@ -534,7 +621,8 @@ def health_check():
             "gcp_project_configured": bool(GCP_PROJECT_ID),
             "model_initialized": bool(model),
             "gcp_location": GCP_LOCATION,
-            "model": VERTEX_MODEL,
+            "model": active_model_name or VERTEX_MODEL,
+            "model_fallback_order": MODEL_FALLBACK_ORDER,
             "environment": "production" if os.getenv("VERCEL") else "development"
         }
     except Exception as e:
@@ -547,7 +635,8 @@ if __name__ == "__main__":
     print("📚 API docs will be available at: http://localhost:8000/docs")
     print("🔑 Make sure GCP_PROJECT_ID is set in your environment")
     print(f"🌍 Using Vertex AI in region: {GCP_LOCATION}")
-    print(f"🤖 Model: {VERTEX_MODEL}")
+    print(f"🤖 Active model: {active_model_name or VERTEX_MODEL}")
+    print(f"🔄 Fallback models: {MODEL_FALLBACK_ORDER}")
     print("-" * 50)
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
